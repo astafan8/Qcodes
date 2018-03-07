@@ -122,6 +122,7 @@ class AMI430(IPInstrument):
         super().__init__(name, address, port, terminator=terminator,
                          write_confirmation=False, **kwargs)
         self._parent_instrument = None
+        self._blocking_on_ramp = True
 
         # Add reset function
         self.add_function('reset', call_cmd='*RST')
@@ -616,7 +617,7 @@ class AMI430_3D(Instrument):
 
         return any([limit_function(*setpoint_values) for limit_function in self._field_limit])
 
-    def _set_fields(self, values):
+    def _set_fields(self, values, block=True):
         """
         Set the fields of the x/y/z magnets. This function is called
         whenever the field is changed and performs several safety checks
@@ -660,7 +661,7 @@ class AMI430_3D(Instrument):
                 if not operator(abs(value), abs(current_actual)):
                     continue
 
-                instrument.set_field(value, perform_safety_check=False)
+                instrument.set_field(value, perform_safety_check=False, block=block)
 
     def _request_field_change(self, instrument, value):
         """
@@ -711,45 +712,45 @@ class AMI430_3D(Instrument):
 
         return return_value
 
-    def _set_cartesian(self, values):
+    def _set_cartesian(self, values, block=True):
         x, y, z = values
         self._set_point.set_vector(x=x, y=y, z=z)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_x(self, x):
+    def _set_x(self, x, block=True):
         self._set_point.set_component(x=x)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_y(self, y):
+    def _set_y(self, y, block=True):
         self._set_point.set_component(y=y)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_z(self, z):
+    def _set_z(self, z, block=True):
         self._set_point.set_component(z=z)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_spherical(self, values):
+    def _set_spherical(self, values, block=True):
         r, theta, phi = values
         self._set_point.set_vector(r=r, theta=theta, phi=phi)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_r(self, r):
+    def _set_r(self, r, block=True):
         self._set_point.set_component(r=r)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_theta(self, theta):
+    def _set_theta(self, theta, block=True):
         self._set_point.set_component(theta=theta)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_phi(self, phi):
+    def _set_phi(self, phi, block=True):
         self._set_point.set_component(phi=phi)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_cylindrical(self, values):
+    def _set_cylindrical(self, values, block=True):
         rho, phi, z = values
         self._set_point.set_vector(rho=rho, phi=phi, z=z)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
 
-    def _set_rho(self, rho):
+    def _set_rho(self, rho, block=True):
         self._set_point.set_component(rho=rho)
-        self._set_fields(self._set_point.get_components("x", "y", "z"))
+        self._set_fields(self._set_point.get_components("x", "y", "z"), block=block)
