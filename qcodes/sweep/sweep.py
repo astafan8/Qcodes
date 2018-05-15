@@ -130,7 +130,7 @@ def getter(param_list, inferred_parameters=None):
         def inner():
             value = np.atleast_1d(f())
 
-            if len(value) != len(param_list + inferred_parameters):
+            if len(value) != len(param_list):
                 raise ValueError(
                     "The number of supplied inferred parameters "
                     "does not match the number returned by the "
