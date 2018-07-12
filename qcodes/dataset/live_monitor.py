@@ -67,3 +67,4 @@ class Plot1DSubscriber:
         self.ax.set_ylim(*bb["y"])
 
         self.fig.canvas.draw()
+        plt.tight_layout()
