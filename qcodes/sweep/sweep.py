@@ -8,6 +8,8 @@ TODO:
 import itertools
 import numpy as np
 import time
+from typing import List, Tuple, Callable
+from copy import deepcopy
 
 import qcodes
 
@@ -419,6 +421,46 @@ class ParameterSweep(BaseSweepObject):
             yield {self._parameter.full_name: set_value}
 
 
+class ParallelParameterSweep(BaseSweepObject):
+    """
+    Sweep independent parameters by looping over set point values
+    AT THE SAME TIME and setting a QCoDeS parameter to this value at each iteration.
+
+    NOTE: the total amount of set point values returned by point_functions
+    needs to be the same, otherwise an exception will occur.
+
+    Parameters
+    ----------
+    param_point_func_tuple_list:
+        a list of tuples (parameter, point_function), can have arbitrary length;
+        again, ensure that all the point_function's generate the same number of values
+        for all the parameters involved in the parallel sweep
+    """
+
+    def __init__(self, *param_point_func_tuple_list: List[Tuple[qcodes.Parameter, Callable]]):
+        super().__init__()
+
+        self._parameters = list()
+        self._point_functions = list()
+
+        for param_point_func_tuple in param_point_func_tuple_list:
+            self._parameters.append(param_point_func_tuple[0])
+            self._point_functions.append(param_point_func_tuple[1])
+
+        self._parameter_table = ParametersTable(
+            independent_parameters=[(param.full_name, param.unit) for param in self._parameters]
+        )
+
+    def _setter_factory(self):
+            for set_values in zip(*[point_function() for point_function in self._point_functions]):
+                for (parameter, set_value) in zip(self._parameters, set_values):
+                    parameter.set(set_value)
+
+                yield {
+                    parameter.full_name: set_value for (parameter, set_value) in zip(self._parameters, set_values)
+                }
+
+
 class ParameterWrapper(BaseSweepObject):
     """
     A wrapper class which iterates once ans returns the value of a QCoDeS
@@ -561,6 +603,45 @@ def sweep(obj, sweep_points):
         return FunctionSweep(obj, point_function)
     else:
         return ParameterSweep(obj, point_function)
+
+
+def parallel_sweep(*param_sweep_points_tuple):
+    """
+    A convenience function to create a 1D sweep object across any number of parameters
+    where sweeping is performed in parallel (the values of parameters are set together)
+
+    NOTE: the total amount of set point values returned by point_functions
+    needs to be the same, otherwise an exception will occur.
+
+    Parameters
+    ----------
+    param_sweep_points_tuple:
+        a list of tuples (parameter, sweep_points), can have arbitrary length;
+        again, ensure that all the length's of the sweep_points's are equal;
+        (the `parameter` and `sweep_points` are the same as for the `sweep` function)
+
+    Returns
+    -------
+    ParallelParameterSweep
+    """
+
+    param_point_function_tuple_list = []
+
+    for param, sweep_points in param_sweep_points_tuple:
+        if not callable(sweep_points):
+            point_function = lambda sweep_points=sweep_points: sweep_points  # a hack to make sure that lambdas are different for every parameter
+        else:
+            point_function = sweep_points
+
+        if not isinstance(param, qcodes.Parameter):
+            raise ValueError(
+                "The object to sweep over needs to be a QCoDeS "
+                "parameter"
+            )
+
+        param_point_function_tuple_list.append((param, point_function))
+
+    return ParallelParameterSweep(*param_point_function_tuple_list)
 
 
 def nest(*objects):
