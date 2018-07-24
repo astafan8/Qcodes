@@ -1546,3 +1546,113 @@ class ManualParameter(Parameter):
         super().__init__(name=name, instrument=instrument,
                          get_cmd=None, set_cmd=None,
                          initial_value=initial_value, **kwargs)
+
+
+class _WrappedParameter(Parameter):
+    """
+    This parameter class wraps a given parameter, and allows to set wrapper
+    functions for get and set methods. This degree of freedom allows to define
+    dependencies between two parameters.
+    """
+    def __init__(self,
+                 original_parameter: Parameter,
+                 get_wrapper: Callable,
+                 set_wrapper: Callable,
+                 name: str,
+                 *args, **kwargs):
+        for attr in ['unit', 'label']:
+            if attr not in kwargs:
+                kwargs.update({attr: getattr(original_parameter, attr, None)})
+        super(_WrappedParameter, self).__init__(
+            name, *args, get_cmd=None, set_cmd=None, **kwargs)
+        self._original_parameter = original_parameter
+        self._get_wrapper = get_wrapper
+        self._set_wrapper = set_wrapper
+
+    def get_raw(self):
+        return self._get_wrapper(self._original_parameter.get())
+
+    def set_raw(self, value):
+        self._original_parameter.set(self._set_wrapper(value))
+
+
+class DelegateParameter(_WrappedParameter):
+    """
+    y = DelegateParameter(x, ...)
+    """
+    def __init__(self,
+                 original_parameter: Parameter,
+                 name,
+                 *args, **kwargs):
+        super(DelegateParameter, self).__init__(
+            original_parameter,
+            lambda x: x,
+            lambda x: x,
+            name,
+            *args, **kwargs)
+
+
+class ScaledParameter(_WrappedParameter):
+    """
+    y = ScaledParameter(x, factor, ...)
+    """
+    def __init__(self,
+                 original_parameter: Parameter,
+                 factor: float,
+                 name,
+                 *args, **kwargs):
+        self._factor = factor
+        super(ScaledParameter, self).__init__(
+            original_parameter,
+            lambda x: x * self._factor,
+            lambda y: y / self._factor,
+            name,
+            *args, **kwargs)
+
+    @property
+    def factor(self):
+        return self._factor
+
+
+class MultipliedParameter(_WrappedParameter):
+    """
+    y = MultipliedParameter(x, multiplier_p, ...)
+    """
+    def __init__(self,
+                 original_parameter,
+                 multiplier_parameter,
+                 name,
+                 *args, **kwargs):
+        self._multiplier_parameter = multiplier_parameter
+        super(MultipliedParameter, self).__init__(
+            original_parameter,
+            lambda x: x * self._multiplier_parameter.get(),
+            lambda x: x / self._multiplier_parameter.get(),
+            name,
+            *args, **kwargs)
+
+    @property
+    def multiplier(self):
+        return self._multiplier_parameter
+
+
+class DividedParameter(_WrappedParameter):
+    """
+    y = DividedParameter(x, divider_p, ...)
+    """
+    def __init__(self,
+                 original_parameter,
+                 divider_parameter,
+                 name,
+                 *args, **kwargs):
+        self._divider_parameter = divider_parameter
+        super(DividedParameter, self).__init__(
+            original_parameter,
+            lambda x: x / self._divider_parameter.get(),
+            lambda x: x * self._divider_parameter.get(),
+            name,
+            *args, **kwargs)
+
+    @property
+    def divider(self):
+        return self._divider_parameter
