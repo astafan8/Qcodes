@@ -12,7 +12,8 @@ import hypothesis.strategies as hst
 from qcodes import Function
 from qcodes.instrument.parameter import (
     Parameter, ArrayParameter, MultiParameter,
-    InstrumentRefParameter)
+    InstrumentRefParameter, DelegateParameter, ScaledParameter,
+    MultipliedParameter, DividedParameter)
 import qcodes.utils.validators as vals
 from qcodes.tests.instrument_mocks import DummyInstrument
 from qcodes.utils.validators import Numbers
@@ -957,3 +958,111 @@ class TestSetContextManager(TestCase):
         with self.instrument.a.set_to(3):
             assert self.instrument.a.get() == 3
         assert self.instrument.a.get() == 2
+
+
+class TestDelegateParameter(TestCase):
+    def test_it(self):
+        x = Parameter('x', label='parameter x', unit='cm', get_cmd=None, set_cmd=None)
+        x.set(12)
+
+        y = DelegateParameter(x, 'y')
+
+        self.assertEqual(x.label, y.label)
+        self.assertEqual(x.unit, y.unit)
+
+        self.assertEqual(x(), y())
+        self.assertEqual(y(), 12)
+
+        y.set(20)
+
+        self.assertEqual(x(), 20)
+        self.assertEqual(y(), 20)
+        self.assertEqual(x(), y())
+
+
+
+class TestScaledParameter(TestCase):
+    def test_it(self):
+        x = Parameter('x', label='parameter x', unit='cm', get_cmd=None, set_cmd=None)
+        x.set(12)
+
+        y = ScaledParameter(x, 2, 'y')
+
+        self.assertEqual(y.factor, 2)
+
+        self.assertEqual(x.label, y.label)
+        self.assertEqual(x.unit, y.unit)
+
+        self.assertEqual(x() * 2, y())
+        self.assertEqual(y(), 12 * 2)
+
+        y.set(10 * 2)
+
+        self.assertEqual(x(), 10)
+        self.assertEqual(y(), 10 * 2)
+        self.assertEqual(x() * 2, y())
+
+        with self.assertRaises(AttributeError):
+            y.factor = 3
+
+
+class TestMultipliedParameter(TestCase):
+    def test_it(self):
+        x = Parameter('x', label='parameter x', unit='cm', get_cmd=None, set_cmd=None)
+        m = Parameter('m', label='multiplier parameter x', unit='#', get_cmd=None,
+                      set_cmd=None)
+        x.set(12)
+        m.set(2)
+
+        y = MultipliedParameter(x, m, 'y')
+
+        self.assertEqual(y.multiplier, m)
+
+        self.assertEqual(x.label, y.label)
+        self.assertEqual(x.unit, y.unit)
+
+        self.assertEqual(x() * 2, y())
+        self.assertEqual(y(), 12 * 2)
+
+        y.set(10 * 2)
+
+        self.assertEqual(x(), 10)
+        self.assertEqual(y(), 10 * 2)
+        self.assertEqual(x() * 2, y())
+
+        y.multiplier(3)
+
+        self.assertEqual(x(), 10)
+        self.assertEqual(y(), 10 * 3)
+        self.assertEqual(x() * 3, y())
+
+
+class TestDividedParameter(TestCase):
+    def test_it(self):
+        x = Parameter('x', label='parameter x', unit='cm', get_cmd=None, set_cmd=None)
+        d = Parameter('d', label='divider parameter x', unit='#', get_cmd=None,
+                      set_cmd=None)
+        x.set(12)
+        d.set(2)
+
+        y = DividedParameter(x, d, 'y')
+
+        self.assertEqual(y.divider, d)
+
+        self.assertEqual(x.label, y.label)
+        self.assertEqual(x.unit, y.unit)
+
+        self.assertEqual(x() / 2, y())
+        self.assertEqual(y(), 12 / 2)
+
+        y.set(10 / 2)
+
+        self.assertEqual(x(), 10)
+        self.assertEqual(y(), 10 / 2)
+        self.assertEqual(x() / 2, y())
+
+        y.divider(3)
+
+        self.assertEqual(x(), 10)
+        self.assertEqual(y(), 10 / 3)
+        self.assertEqual(x() / 3, y())
