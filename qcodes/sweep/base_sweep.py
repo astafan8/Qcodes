@@ -673,7 +673,8 @@ class While(BaseSweepObject):
 
     def __init__(self, measure_function: Callable)->None:
         super().__init__()
-        self._measure_function, self._parameter_table = measure_function()
+        self._parameter_table = measure_function.parameter_table
+        self._measure_function = measure_function()
 
     def _setter_factory(self)->Iterator:
 
