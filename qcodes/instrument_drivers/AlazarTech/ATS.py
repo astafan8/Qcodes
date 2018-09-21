@@ -741,6 +741,8 @@ class AlazarTech_ATS(Instrument):
         self._set_updated_if_alazar_parameter(self.interleave_samples)
         self._set_updated_if_alazar_parameter(self.get_processed_data)
 
+        t_allocating_buffers_0 = time.perf_counter() # miasta
+
         # bytes per sample
         max_s, bps = self._get_channel_info(self._handle)
         # TODO(JHN) Why +7 I guess its to do ceil division?
@@ -752,12 +754,12 @@ class AlazarTech_ATS(Instrument):
         channels_binrep = self._get_raw_or_bytes(self.channel_selection)
         number_of_channels = self.get_num_channels(channels_binrep)
 
-        # bytes per sample
-        max_s, bps = self._get_channel_info(self._handle)
-        # TODO(JHN) Why +7 I guess its to do ceil division?
-        bytes_per_sample = (bps + 7) // 8
-        # bytes per record
-        bytes_per_record = bytes_per_sample * samples_per_record
+        # # bytes per sample
+        # max_s, bps = self._get_channel_info(self._handle)
+        # # TODO(JHN) Why +7 I guess its to do ceil division?
+        # bytes_per_sample = (bps + 7) // 8
+        # # bytes per record
+        # bytes_per_record = bytes_per_sample * samples_per_record
 
         # bytes per buffer
         bytes_per_buffer = (bytes_per_record *
@@ -791,6 +793,16 @@ class AlazarTech_ATS(Instrument):
                 self.clear_buffers()
                 raise
 
+        t_allocating_buffers_1 = time.perf_counter() # miasta
+
+        dll_wait_calls_times = [0] * self.buffers_per_acquisition() # miasta
+        handle_buffer_calls_times = [0] * self.buffers_per_acquisition() # miasta
+        dll_repost_calls_times = [0] * self.buffers_per_acquisition() # miasta
+
+        dll_wait_calls_moments = [0] * self.buffers_per_acquisition() # miasta
+        handle_buffer_calls_moments = [0] * self.buffers_per_acquisition() # miasta
+        dll_repost_calls_moments = [0] * self.buffers_per_acquisition() # miasta
+
         # post buffers to Alazar
         try:
             for buf in self.buffer_list:
@@ -799,11 +811,17 @@ class AlazarTech_ATS(Instrument):
             self._set_updated_if_alazar_parameter(self.allocated_buffers)
 
             # -----start capture here-----
+            t_pre_start_capture_0 = time.perf_counter() # miasta
             acquisition_controller.pre_start_capture()
+
             start = time.perf_counter()  # Keep track of when acquisition started
+
             # call the startcapture method
             self._call_dll('AlazarStartCapture', self._handle)
+            t_start_capture_1 = time.perf_counter() # miasta
+
             acquisition_controller.pre_acquire()
+            t_pre_acquire_1 = time.perf_counter() # miasta
 
             # buffer handling from acquisition
             buffers_completed = 0
@@ -816,17 +834,28 @@ class AlazarTech_ATS(Instrument):
                 # Wait for the buffer at the head of the list of available
                 # buffers to be filled by the board.
                 buf = self.buffer_list[buffers_completed % allocated_buffers]
+                t_wait_0 = time.perf_counter() # miasta
                 self._call_dll('AlazarWaitAsyncBufferComplete',
                                self._handle, ctypes.cast(buf.addr, ctypes.c_void_p), buffer_timeout)
+                dll_wait_calls_moments[buffers_completed] = time.perf_counter()
+                dll_wait_calls_times[buffers_completed] = dll_wait_calls_moments[buffers_completed] - t_wait_0 # miasta
 
                 acquisition_controller.buffer_done_callback(buffers_completed)
 
                 # if buffers must be recycled, extract data and repost them
                 # otherwise continue to next buffer
                 if buffer_recycling:
+                    t_handle_buffer_0 = time.perf_counter() # miasta
                     acquisition_controller.handle_buffer(buf.buffer, buffers_completed)
+                    handle_buffer_calls_moments[buffers_completed] = time.perf_counter()
+                    handle_buffer_calls_times[buffers_completed] = handle_buffer_calls_moments[buffers_completed] - t_handle_buffer_0 # miasta
+
+                    t_repost_0 = time.perf_counter() # miasta
                     self._call_dll('AlazarPostAsyncBuffer',
                                    self._handle, ctypes.cast(buf.addr, ctypes.c_void_p), buf.size_bytes)
+                    dll_repost_calls_moments[buffers_completed] = time.perf_counter()
+                    dll_repost_calls_times[buffers_completed] = dll_repost_calls_moments[buffers_completed] - t_repost_0 # miasta
+
                 buffers_completed += 1
                 bytes_transferred += buf.size_bytes
         finally:
@@ -855,9 +884,13 @@ class AlazarTech_ATS(Instrument):
                     raise RuntimeError(f"TraceParameter {p} not synced to Alazar "
                                        "card detected. Aborting. Data may be corrupt")
 
+        end_time = time.perf_counter()
+
+        t_post_acquire_0 = time.perf_counter()
+        result = acquisition_controller.post_acquire()       
+        t_post_acquire_1 = time.perf_counter()
 
         # Compute the total transfer time, and display performance information.
-        end_time = time.perf_counter()
         tot_time = end_time - start_func
         transfer_time_sec = end_time - start
         presetup_time = start - start_func
@@ -875,22 +908,36 @@ class AlazarTech_ATS(Instrument):
             records_per_sec = (records_per_buffer *
                                buffers_completed / transfer_time_sec)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Captured %d buffers (%f buffers per sec)" %
+            logger.debug( "Captured %d buffers (%f buffers per sec)" %
                          (buffers_completed, buffers_per_sec))
-            logger.debug("Captured %d records (%f records per sec)" %
+            logger.debug( "Captured %d records (%f records per sec)" %
                          (records_per_buffer * buffers_completed, records_per_sec))
-            logger.debug("Transferred {:g} bytes ({:g} "
-                         "bytes per sec)".format(bytes_transferred, bytes_per_sec))
-            logger.debug("Pre setup took {}".format(presetup_time))
-            logger.debug("Pre capture setup took {}".format(setup_time))
-            logger.debug("Capture took {}".format(capture_time))
-            logger.debug("abort took {}".format(abort_time))
-            logger.debug("handling took {}".format(handling_time))
-            logger.debug("free mem took {}".format(free_mem_time))
-            logger.debug("tot acquire time is {}".format(tot_time))
-
+            logger.debug( "Transferred {:g} bytes ({:g} "
+                          "bytes per sec)".format(bytes_transferred, bytes_per_sec))
+            logger.debug(f"    allocating buffers took {t_allocating_buffers_1 - t_allocating_buffers_0}")
+            logger.debug( "  Pre setup took {}".format(presetup_time))
+            logger.debug(f"  AcqCtrl.pre_start_capture took {start - t_pre_start_capture_0}")
+            logger.debug(f"  AlazarStartCapture took {t_start_capture_1 - start}")
+            logger.debug(f"  AcqCtrl.pre_acquire took {t_pre_acquire_1 - t_start_capture_1}")
+            logger.debug( "  Pre capture setup took {}".format(setup_time))
+            logger.debug( "  Capture took {}".format(capture_time))
+            logger.debug( "    async wait calls took (s): {} +- {}".format(np.mean(dll_wait_calls_times), np.std(dll_wait_calls_times))) # miasta
+            # logger.debug( "    async wait calls : {}".format(dll_wait_calls_times)) # miasta
+            logger.debug( "    handle buffer calls took (s): {} +- {}".format(np.mean(handle_buffer_calls_times), np.std(handle_buffer_calls_times))) # miasta
+            # logger.debug( "    handle buffer calls : {}".format(handle_buffer_calls_times)) # miasta
+            logger.debug( "    repost calls took (s): {} +- {}".format(np.mean(dll_repost_calls_times), np.std(dll_repost_calls_times))) # miasta
+            logger.debug( "  abort took {}".format(abort_time))
+            logger.debug( "  handling took {}".format(handling_time))
+            logger.debug( "  free mem took {}".format(free_mem_time))
+            logger.debug( "tot acquisition time is {}".format(tot_time))
+            logger.debug(f"AcqCtrl.post_acquire took {t_post_acquire_1 - t_post_acquire_0}")
+            logger.debug(f"reference_acq_start_moment = {done_setup}")
+            logger.debug(f"dll_wait_calls_moments = {dll_wait_calls_moments}")
+            logger.debug(f"handle_buffer_calls_moments = {handle_buffer_calls_moments}")
+            logger.debug(f"dll_repost_calls_moments = {dll_repost_calls_moments}")
+        
         # return result
-        return acquisition_controller.post_acquire()
+        return result
 
     def _set_if_present(self, param_name: str, value: Union[int,str,float]) -> None:
         if value is not None:
@@ -1172,7 +1219,7 @@ class AcquisitionController(Instrument):
         super().__init__(name, **kwargs)
         self._alazar = self.find_instrument(alazar_name,
                                             instrument_class=AlazarTech_ATS)
-
+ 
     def _get_alazar(self):
         """
         returns a reference to the alazar instrument. A call to self._alazar is
