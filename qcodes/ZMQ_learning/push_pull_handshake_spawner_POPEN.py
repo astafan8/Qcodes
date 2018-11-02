@@ -29,8 +29,7 @@ def is_the_writer_online(poller: zmq.Poller,
     response = dict(poller.poll(timeout=1000*timeout))  # timeout in ms
 
     if req_sock in response:
-        print(f'Got poll response: {response}')
-        print(req_sock.recv())
+        print(req_sock.recv().decode('utf-8'))
         return True
     else:
         print('No writer found')
@@ -61,11 +60,12 @@ def spawn_writer(pull_port: int, rep_port: int) -> None:
     print('Spawning out a writer')
     cmd = ["python", "push_pull_handshake_suicidal_writer.py",
            f"{pull_port}", f"{rep_port}"]
-    subprocess.Popen(cmd)
+    subprocess.Popen(cmd, creationflags=DETACHED_PROCESS)
 
 
 port = 5557
 ctx = zmq.Context()
+DETACHED_PROCESS = 0x00000008
 
 if __name__ == "__main__":
 
