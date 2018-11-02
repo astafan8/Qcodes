@@ -36,6 +36,7 @@ def suicidal_writer(pull_port: int, rep_port: int) -> None:
     with open(filename, 'w') as fid:
 
         fid.write(f'Got pull_port {pull_port} and req_port {rep_port}\n')
+        fid.flush()
 
         while not (perf_counter() - last_ping) > timeout:
 
@@ -44,14 +45,17 @@ def suicidal_writer(pull_port: int, rep_port: int) -> None:
             if rep_sock in response:
                 mssg = rep_sock.recv().decode('utf-8')
                 fid.write(mssg + '\n')
+                fid.flush()
                 rep_sock.send(b"Yes")
                 last_ping = perf_counter()
             if pull_sock in response:
                 mssg = pull_sock.recv()
                 fid.write(mssg.decode('utf-8') + '\n')
+                fid.flush()
                 last_ping = perf_counter()
 
         fid.write('Reached my timeout limit. Signing off.')
+        fid.flush()
 
 
 if __name__ == "__main__":
