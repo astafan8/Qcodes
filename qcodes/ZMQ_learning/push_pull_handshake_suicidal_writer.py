@@ -3,12 +3,18 @@ from time import perf_counter
 import os
 from datetime import datetime
 import argparse
+import math
+
+
+# If not set to math.inf, will die after writing this number of messages to file
+N_MSG_TO_DIE_AFTER = math.inf  # 3
 
 
 def suicidal_writer(pull_port: int, rep_port: int) -> None:
     """
     Listen for stuff and die after some time
     """
+    n_msg_to_die_after = N_MSG_TO_DIE_AFTER
 
     ctx = zmq.Context()
 
@@ -53,6 +59,13 @@ def suicidal_writer(pull_port: int, rep_port: int) -> None:
                 fid.write(mssg.decode('utf-8') + '\n')
                 fid.flush()
                 last_ping = perf_counter()
+
+                n_msg_to_die_after -= 1
+                if n_msg_to_die_after < 1:
+                    msg = f'dying after {N_MSG_TO_DIE_AFTER} msgs...'
+                    fid.write(msg)
+                    fid.flush()
+                    raise Exception(msg)
 
         fid.write('Reached my timeout limit. Signing off.')
         fid.flush()
