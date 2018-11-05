@@ -1,4 +1,6 @@
+import os
 import subprocess
+from pathlib import PurePath
 from time import sleep, perf_counter
 from typing import Tuple
 
@@ -6,6 +8,9 @@ import sys
 import zmq
 from zmq.sugar.socket import Socket  # for type annotations
 
+
+SPAWNER_DIR = PurePath(os.path.realpath(__file__)).parent
+SPAWNER_FILENAME = 'push_pull_handshake_suicidal_writer.py'
 
 # This is the main (mother) process, also the pusher
 
@@ -58,7 +63,7 @@ def spawn_writer(pull_port: int, rep_port: int) -> None:
     Spawn the writer. I dunno, should this return something?
     """
     print('Spawning out a writer')
-    cmd = ["python", "push_pull_handshake_suicidal_writer.py",
+    cmd = ["python", str(SPAWNER_DIR / SPAWNER_FILENAME),
            f"{pull_port}", f"{rep_port}"]
     subprocess.Popen(cmd, creationflags=DETACHED_PROCESS)
 
