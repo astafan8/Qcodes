@@ -41,13 +41,16 @@ class Measurer:
         self._guid = f"{'0'*8}-{'0'*4}-{'0'*4}-{'0'*4}-{'0'*12}"
 
         self._timeout = suicide_timeout
-        self._last_write = 0
+        self._last_write = perf_counter() - self._timeout - 1
 
         # start-up actions
         self._create_sockets(start_port)
 
         modulepath = qcodes.ZMQ_learning.__file__.replace('__init__.py', '')
         self._path_to_writer = os.path.join(modulepath, 'writer.py')
+
+        print('Init succesful')
+        print(f'PUSH on {self._push_port}, REQ on {self._req_port}')
 
     def _create_sockets(self, start_port: int) -> None:
         """
@@ -85,7 +88,7 @@ class Measurer:
         else:
             self._push_socket = push_sock
             self._req_socket = req_sock
-            self.poller.register(self._push_socket, zmq.POLLIN)
+            self.poller.register(self._req_socket, zmq.POLLIN)
 
     def start_run(self) -> None:
         """
@@ -102,7 +105,12 @@ class Measurer:
         self._req_socket.send(bytes(mssg, 'utf-8'))
         response = dict(self.poller.poll(timeout=100))  # magic number
 
+        print(response)
+        print(self._req_socket)
+        print(f"socket in response: {self._req_socket in response}")
+
         if self._req_socket in response:
+            self._req_socket.recv()  # important to stay in-step
             return True
         else:
             return False
@@ -112,7 +120,7 @@ class Measurer:
                f"{self._push_port}",
                f"{self._req_port}"]
         subprocess.Popen(cmd, creationflags=self.DETACHED_PROCESS)
-        sleep(0.01)  # TODO: is any sleep required?
+        sleep(0.5)  # TODO: is any sleep required?
 
     def _reset_sockets(self) -> None:
             self._req_socket.setsockopt(zmq.LINGER, 0)
@@ -124,15 +132,25 @@ class Measurer:
             self.poller.register(self._req_socket, zmq.POLLIN)
 
     def add_result(self, result: Tuple) -> None:
+        """
+        Add a result to the data file
 
+        Args:
+            result: tuple of tuples ("name", value) where value can be a number
+              or a string
+        """
         if perf_counter() - self._last_write > self._timeout:
+
             if not self.check_for_writer():
                 self._spawn_writer()
                 self._reset_sockets()
                 if not self.check_for_writer():
+                    self._reset_sockets()
                     raise RuntimeError('Could not spawn writer. Call 911.')
 
+        self._current_chunk_number += 1
         self.send_data(result)
+        self._last_write = perf_counter()
 
     def send_data(self, result: Tuple) -> None:
         header = {'guid': self._guid, 'chunkid': self._current_chunk_number}
