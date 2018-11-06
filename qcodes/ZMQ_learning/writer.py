@@ -1,6 +1,6 @@
 import zmq
 from zmq.sugar.socket import Socket
-from time import perf_counter
+from time import perf_counter, sleep
 import os
 from datetime import datetime
 import argparse
@@ -16,8 +16,8 @@ logger = logging.getLogger('writer')
 logger.setLevel(logging.INFO)
 fh = logging.FileHandler('writerslog.log')
 fh.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s '
-                              '%(funcName)s- %(message)s')
+formatter = logging.Formatter('%(asctime)s *|* %(levelname)s *|*'
+                              ' %(funcName)s *|* %(message)s')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
@@ -33,9 +33,9 @@ class Writer:
 
         ctx = zmq.Context()
         self.pull_socket = ctx.socket(zmq.PULL)
-        self.pull_socket.connect(f'tcp:://127.0.0.1:{pull_port}')
+        self.pull_socket.connect(f'tcp://127.0.0.1:{pull_port}')
         self.rep_socket = ctx.socket(zmq.REP)
-        self.rep_socket.bind(f'tcp:://127.0.0.1:{rep_port}')
+        self.rep_socket.bind(f'tcp://127.0.0.1:{rep_port}')
         self.poller = zmq.Poller()
         self.poller.register(self.rep_socket)
         self.poller.register(self.pull_socket)
@@ -48,7 +48,7 @@ class Writer:
         self.guid = ''
         self.mode: str = 'GNUPLOT'
         self.columns: Tuple = ()  # the ORDERED column names of the data
-        self.filehandle: [TextIOWrapper, None] = None
+        self.filehandle: Union[TextIOWrapper, None] = None
 
         logger.info('init OK')
 
@@ -65,15 +65,16 @@ class Writer:
         chunkid = mssgdict['metadata']['chunkid']
         datatuple = mssgdict['data']
 
-        logger.info('Writing chunk number {chunkid} to GUID {guid}')
-
         if guid != self.guid:
+            logger.info("Got new guid, opening new file")
             self.guid = guid
-            self.filehandle.flush()
-            self.filehandle.close()
+            if self.filehandle is not None:
+                self.filehandle.flush()
+                self.filehandle.close()
             self.filehandle = open(self.guid+FILEMODES[self.mode]['extension'], 'a')
             self.columns = tuple(tup[0] for tup in datatuple)
         if mssgdict['metadata']['chunkid'] == 1:
+            logger.info('writing header')
             # Some file modes have an extra step on first write
             # (like writing a header)
             if self.mode == 'GNUPLOT':
@@ -81,6 +82,7 @@ class Writer:
         # now write a line
         # the should be a switch-dict here
         if self.mode == 'GNUPLOT':
+            logger.info(f'Writing chunk number {chunkid} to GUID {guid}')
             self.gnuplot_write_row(datatuple)
 
     def handle_data_message(self):
@@ -96,7 +98,7 @@ class Writer:
         """
         Write the header
         """
-        line = ' '.join(self.columns)
+        line = ' '.join(self.columns) + '\n'
         self.filehandle.write(line)
 
     def gnuplot_write_row(self, datatuple: Tuple) -> None:
@@ -115,13 +117,16 @@ class Writer:
         self.filehandle.write(line)
         self.filehandle.flush()
 
+        sleep(1)  # sleeping longer than the Measurer ping timeout is dangerous
+
     def handle_ping_request(self) -> None:
         """
         Handle the ping and get the configuration that sets the timeout
         """
+        logger.info('Got a ping')
         mssg = self.rep_socket.recv().decode('utf-8')
         conf = json.loads(mssg)
-        self.rep_socket.send(b"")  # ping back that we are alive
+        self.rep_socket.send(b" ")  # ping back that we are alive
         self.timeout = conf['timeout'] + 1  # to be safe
         self.last_ping = perf_counter()
 
@@ -129,6 +134,7 @@ class Writer:
         """
         Pull data out of the socket and pass it on
         """
+        logger.info('Receiving data')
         metadata = self.pull_socket.recv_json()
         data = self.pull_socket.recv_pyobj()
         return {'metadata': metadata, 'data': data}
@@ -147,6 +153,8 @@ def main(pull_port: int, rep_port: int) -> None:
 
     writer = Writer(pull_port, rep_port)
 
+    logger.info('starting the listening event loop')
+
     while not (perf_counter() - writer.last_ping) > writer.timeout:
 
         response = dict(writer.poller.poll(timeout=100))
@@ -158,7 +166,7 @@ def main(pull_port: int, rep_port: int) -> None:
         if writer.pull_socket in response:
             writer.handle_data_message()
 
-    logger.INFO('Terminating writer. Goodbye.')
+    logger.info('Terminating writer. Goodbye.')
 
 
 if __name__ == "__main__":
