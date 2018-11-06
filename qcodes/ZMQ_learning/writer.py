@@ -7,10 +7,19 @@ import argparse
 import json
 from typing import Tuple, Dict, Union
 from _io import TextIOWrapper
+import logging
 
 # CONSTANTS
 FILEMODES = {'GNUPLOT': {'extension': '.dat'}}
 
+logger = logging.getLogger('writer')
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler('writerslog.log')
+fh.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s '
+                              '%(funcName)s- %(message)s')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
 
 
 class Writer:
@@ -19,6 +28,8 @@ class Writer:
     """
 
     def __init__(self, pull_port: int, rep_port: int):
+
+        logger.info(f'PULL port: {pull_port}, REP port: {rep_port}')
 
         ctx = zmq.Context()
         self.pull_socket = ctx.socket(zmq.PULL)
@@ -39,6 +50,8 @@ class Writer:
         self.columns: Tuple = ()  # the ORDERED column names of the data
         self.filehandle: [TextIOWrapper, None] = None
 
+        logger.info('init OK')
+
     def write(self, mssgdict: Dict) -> None:
         """
         Get a message written to disk
@@ -49,7 +62,10 @@ class Writer:
             filehandle: the handle to the file to write to
         """
         guid = mssgdict['metadata']['guid']
+        chunkid = mssgdict['metadata']['chunkid']
         datatuple = mssgdict['data']
+
+        logger.info('Writing chunk number {chunkid} to GUID {guid}')
 
         if guid != self.guid:
             self.guid = guid
@@ -141,6 +157,8 @@ def main(pull_port: int, rep_port: int) -> None:
 
         if writer.pull_socket in response:
             writer.handle_data_message()
+
+    logger.INFO('Terminating writer. Goodbye.')
 
 
 if __name__ == "__main__":
