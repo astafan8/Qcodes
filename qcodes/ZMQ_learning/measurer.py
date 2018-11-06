@@ -6,6 +6,7 @@ from zmq.sugar.socket import Socket
 import subprocess
 from time import sleep
 import uuid
+import json
 
 import qcodes.ZMQ_learning  # this is the path to the writer script
 
@@ -94,7 +95,11 @@ class Measurer:
         self._current_chunk_number = 0
 
     def check_for_writer(self) -> bool:
-        self._req_socket.send(b'Are you there?')
+        """
+        This checks for writer, but also reconfigures the writer
+        """
+        mssg = json.dumps({'timeout': self._timeout})
+        self._req_socket.send(bytes(mssg, 'utf-8'))
         response = dict(self.poller.poll(timeout=100))  # magic number
 
         if self._req_socket in response:
@@ -104,7 +109,8 @@ class Measurer:
 
     def _spawn_writer(self) -> None:
         cmd = ["python", self._path_to_writer,
-               f"{self._push_port}", f"{self._req_port}"]
+               f"{self._push_port}",
+               f"{self._req_port}"]
         subprocess.Popen(cmd, creationflags=self.DETACHED_PROCESS)
         sleep(0.01)  # TODO: is any sleep required?
 
@@ -126,9 +132,9 @@ class Measurer:
                 if not self.check_for_writer():
                     raise RuntimeError('Could not spawn writer. Call 911.')
 
-        self.send(result)
+        self.send_data(result)
 
-    def send(self, result: Tuple) -> None:
+    def send_data(self, result: Tuple) -> None:
         header = {'guid': self._guid, 'chunkid': self._current_chunk_number}
         self._push_socket.send_json(header, zmq.SNDMORE)
         self._push_socket.send_pyobj(result)
