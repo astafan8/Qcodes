@@ -65,7 +65,8 @@ def spawn_writer(pull_port: int, rep_port: int) -> None:
     print('Spawning out a writer')
     cmd = ["python", str(SPAWNER_DIR / SPAWNER_FILENAME),
            f"{pull_port}", f"{rep_port}"]
-    subprocess.Popen(cmd, creationflags=DETACHED_PROCESS)
+    p = subprocess.Popen(cmd, creationflags=DETACHED_PROCESS)
+    print(f'Spawned writer with pid {p.pid}')
 
 
 port = 5557
