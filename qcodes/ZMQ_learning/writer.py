@@ -1,13 +1,14 @@
 import zmq
 from zmq.sugar.socket import Socket
 from time import perf_counter, sleep
-import os
+from queue import Queue
 from datetime import datetime
 import argparse
 import json
 from typing import Tuple, Dict, Union
 from _io import TextIOWrapper
 import logging
+from threading import Thread
 
 # CONSTANTS
 FILEMODES = {'GNUPLOT': {'extension': '.dat'}}
@@ -50,48 +51,60 @@ class Writer:
         self.columns: Tuple = ()  # the ORDERED column names of the data
         self.filehandle: Union[TextIOWrapper, None] = None
 
+        # New threading feature o.O O.o
+        self.mssg_queue: Queue = Queue()
+        self.keep_writer_thread_alive = True
+        self.write_thread = Thread(target=self._off_main_thread_writer,
+                                   args=())
+        self.write_thread.start()
+
         logger.info('init OK')
 
-    def write(self, mssgdict: Dict) -> None:
-        """
-        Get a message written to disk
+    def _off_main_thread_writer(self) -> None:
+        current_guid = self.guid
 
-        Args:
-            mssgdict: the dict that was sent across the PUSH-PULL socket
-            mode: the output file mode, e.g. 'GNUPLOT'
-            filehandle: the handle to the file to write to
-        """
-        guid = mssgdict['metadata']['guid']
-        chunkid = mssgdict['metadata']['chunkid']
-        datatuple = mssgdict['data']
+        logger.info('Off-thread writer started')
 
-        if guid != self.guid:
-            logger.info("Got new guid, opening new file")
-            self.guid = guid
-            if self.filehandle is not None:
-                self.filehandle.flush()
-                self.filehandle.close()
-            self.filehandle = open(self.guid+FILEMODES[self.mode]['extension'], 'a')
-            self.columns = tuple(tup[0] for tup in datatuple)
-        if mssgdict['metadata']['chunkid'] == 1:
-            logger.info('writing header')
-            # Some file modes have an extra step on first write
-            # (like writing a header)
-            if self.mode == 'GNUPLOT':
-                self.gnuplot_write_header()
-        # now write a line
-        # the should be a switch-dict here
-        if self.mode == 'GNUPLOT':
-            logger.info(f'Writing chunk number {chunkid} to GUID {guid}')
-            self.gnuplot_write_row(datatuple)
+        while self.keep_writer_thread_alive:
+            if not self.mssg_queue.empty():
+                mssgdict = self.mssg_queue.get()
+                guid = mssgdict['metadata']['guid']
+                chunkid = mssgdict['metadata']['chunkid']
+                datatuple = mssgdict['data']
 
-    def handle_data_message(self):
+                if current_guid != guid:
+                    logger.info("Got new guid, opening new file")
+                    current_guid = guid
+                    if self.filehandle is not None:
+                        self.filehandle.flush()
+                        self.filehandle.close()
+                    self.filehandle = open(self.guid+FILEMODES[self.mode]['extension'], 'a')
+                    self.columns = tuple(tup[0] for tup in datatuple)
+                if mssgdict['metadata']['chunkid'] == 1:
+                    logger.info('writing header')
+                    # Some file modes have an extra step on first write
+                    # (like writing a header)
+                    if self.mode == 'GNUPLOT':
+                        self.gnuplot_write_header()
+                # now write a line
+                # the should be a switch-dict here
+                if self.mode == 'GNUPLOT':
+                    logger.info(f'Writing chunk number {chunkid} to GUID {guid}')
+                    self.gnuplot_write_row(datatuple)
+                self.last_ping = perf_counter()
+                self.mssg_queue.task_done()
+            else:
+                pass
+
+        logger.info('Off-thread writer signing off')
+
+    def handle_data_message(self) -> None:
         """
         To be called when a poll has revealed that there is something
         in the PULL queue
         """
         mssgdict = self._receive_data()
-        self.write(mssgdict)
+        self.mssg_queue.put(mssgdict)
         self.last_ping = perf_counter()
 
     def gnuplot_write_header(self) -> None:
@@ -139,6 +152,11 @@ class Writer:
         data = self.pull_socket.recv_pyobj()
         return {'metadata': metadata, 'data': data}
 
+    def is_done_waiting_and_working(self) -> bool:
+        done_waiting = (perf_counter() - self.last_ping) > self.timeout
+        # done_working = (len(self.mssg_deque) == 0)
+        return done_waiting and done_working
+
 
 def main(pull_port: int, rep_port: int) -> None:
     """
@@ -166,8 +184,11 @@ def main(pull_port: int, rep_port: int) -> None:
         if writer.pull_socket in response:
             writer.handle_data_message()
 
-    logger.info('Terminating writer. Goodbye.')
+    logger.info('Writer done waiting and working')
 
+    writer.keep_writer_thread_alive = False
+    writer.write_thread.join()
+    logger.info('Write thread finished')
 
 if __name__ == "__main__":
 
