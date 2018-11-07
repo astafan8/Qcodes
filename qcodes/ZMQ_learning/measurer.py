@@ -97,8 +97,12 @@ class Measurer:
         """
         Mocks the start of a new run
         """
-        self._guid = str(uuid.uuid4())
+        self._guid = self._generate_guid()
         self._current_chunk_number = 0
+
+    def _generate_guid(self):
+        """Generate a guid (useful when testing because allows for injection)"""
+        return str(uuid.uuid4())
 
     def check_for_writer(self) -> bool:
         """
