@@ -11,6 +11,9 @@ import json
 import qcodes.ZMQ_learning  # this is the path to the writer script
 
 
+DEFAULT_SUICIDE_TIMEOUT = 10
+
+
 class Measurer:
     """
     A class to mimick the Measurement class of QCoDes. Sends data to disk
@@ -26,7 +29,7 @@ class Measurer:
     _ports_to_try: int = 10  # number of ports to try to bind to in init
 
     def __init__(self, start_port: int,
-                 suicide_timeout: Optional[float]) -> None:
+                 suicide_timeout: Optional[float]=None) -> None:
 
         # ZMQ related variables
         self._ctx = zmq.Context()
@@ -40,7 +43,7 @@ class Measurer:
         self._current_chunk_number: int = 0
         self._guid = f"{'0'*8}-{'0'*4}-{'0'*4}-{'0'*4}-{'0'*12}"
 
-        self._timeout = suicide_timeout
+        self._timeout = suicide_timeout or DEFAULT_SUICIDE_TIMEOUT
         self._last_write = perf_counter() - self._timeout - 1
 
         # start-up actions
@@ -160,6 +163,10 @@ class Measurer:
     @property
     def guid(self):
         return self._guid
+
+    @property
+    def timeout(self):
+        return self._timeout
 
     @property
     def push_socket(self):
