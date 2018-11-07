@@ -52,6 +52,9 @@ class Measurer:
         modulepath = qcodes.ZMQ_learning.__file__.replace('__init__.py', '')
         self._path_to_writer = os.path.join(modulepath, 'writer.py')
 
+        # for testing purposes ONLY
+        self._current_writer_process: Optional[subprocess.Popen] = None
+
         print('Init succesful')
         print(f'PUSH on {self._push_port}, REQ on {self._req_port}')
 
@@ -126,7 +129,8 @@ class Measurer:
         cmd = ["python", self._path_to_writer,
                f"{self._push_port}",
                f"{self._req_port}"]
-        subprocess.Popen(cmd, creationflags=self.DETACHED_PROCESS)
+        self._current_writer_process = subprocess.Popen(
+            cmd, creationflags=self.DETACHED_PROCESS)
         sleep(0.5)  # TODO: is any sleep required?
 
     def _reset_sockets(self) -> None:
