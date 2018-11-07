@@ -1,6 +1,6 @@
 import os
 from time import perf_counter
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Any
 import zmq
 from zmq.sugar.socket import Socket
 import subprocess
@@ -138,7 +138,7 @@ class Measurer:
             self._req_socket.connect(f"tcp://127.0.0.1:{self._req_port}")
             self.poller.register(self._req_socket, zmq.POLLIN)
 
-    def add_result(self, result: Tuple) -> None:
+    def add_result(self, result: Tuple[Tuple[str, Any]]) -> None:
         """
         Add a result to the data file
 
