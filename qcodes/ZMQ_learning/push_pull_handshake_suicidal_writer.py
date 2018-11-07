@@ -7,6 +7,7 @@ import math
 
 
 # If not set to math.inf, will die after writing this number of messages to file
+TIMEOUT = 3
 N_MSG_TO_DIE_AFTER = math.inf  # 3
 
 
@@ -32,7 +33,7 @@ def suicidal_writer(pull_port: int, rep_port: int) -> None:
 
     last_ping = perf_counter()
 
-    timeout = 15  # timeout in seconds
+    timeout = TIMEOUT  # timeout in seconds
 
     timestr = datetime.now().strftime('%Y-%m-%d_%H_%M_%S')
     filename = os.path.join(os.getcwd(), f'writer-{timestr}.txt')
