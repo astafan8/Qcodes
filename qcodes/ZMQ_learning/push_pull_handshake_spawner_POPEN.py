@@ -112,7 +112,7 @@ if __name__ == "__main__":
         poller, req_sock = reset_req_sock_and_poller(poller, req_sock,
                                                      req_port)
 
-        sleep(0.250)
+        sleep(1)
         if not is_the_writer_online(poller, req_sock, 1):
             print('Failing to spawn writer. Sorry, bro.')
             sys.exit()
