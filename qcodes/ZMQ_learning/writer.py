@@ -1,17 +1,25 @@
-import zmq
-from zmq.sugar.socket import Socket
+import os
+from pathlib import PurePath
 from time import perf_counter, sleep
 from queue import Queue
-from datetime import datetime
 import argparse
 import json
-from typing import Tuple, Dict, Union
+from typing import Tuple, Dict, Optional
 from _io import TextIOWrapper
 import logging
 from threading import Thread
 
+import zmq
+from zmq.sugar.socket import Socket
+
+
 # CONSTANTS
+WRITE_ROW_ARTIFICIAL_SLEEP = 1  # longer than Measurer ping timeout is dangerous
+DEFAULT_PING_TIMEOUT = 15
 FILEMODES = {'GNUPLOT': {'extension': '.dat'}}
+DEFAULT_FILE_MODE = list(FILEMODES.keys())[0]
+DIR_FOR_DATAFILE = PurePath(os.path.realpath(__file__)).parent
+
 
 logger = logging.getLogger('writer')
 logger.setLevel(logging.INFO)
@@ -33,23 +41,24 @@ class Writer:
         logger.info(f'PULL port: {pull_port}, REP port: {rep_port}')
 
         ctx = zmq.Context()
-        self.pull_socket = ctx.socket(zmq.PULL)
+        self.pull_socket: Socket = ctx.socket(zmq.PULL)
         self.pull_socket.connect(f'tcp://127.0.0.1:{pull_port}')
-        self.rep_socket = ctx.socket(zmq.REP)
+        self.rep_socket: Socket = ctx.socket(zmq.REP)
         self.rep_socket.bind(f'tcp://127.0.0.1:{rep_port}')
         self.poller = zmq.Poller()
         self.poller.register(self.rep_socket)
         self.poller.register(self.pull_socket)
 
         self.last_ping = perf_counter()
-        self.timeout = 15  # this is re-configured on the REQ-REP line
+        self.timeout = DEFAULT_PING_TIMEOUT  # this is re-configured on the REQ-REP line
 
         # The state of the run that needs to be passed around between different
         # sub-writers
         self.guid = ''
-        self.mode: str = 'GNUPLOT'
+        self.mode: str = DEFAULT_FILE_MODE
         self.columns: Tuple = ()  # the ORDERED column names of the data
-        self.filehandle: Union[TextIOWrapper, None] = None
+        self.filename: str = 'writer_default'
+        self.filehandle: Optional[TextIOWrapper] = None
 
         # New threading feature o.O O.o
         self.mssg_queue: Queue = Queue()
@@ -130,7 +139,8 @@ class Writer:
         self.filehandle.write(line)
         self.filehandle.flush()
 
-        sleep(1)  # sleeping longer than the Measurer ping timeout is dangerous
+        # sleeping longer than the Measurer ping timeout is dangerous
+        sleep(WRITE_ROW_ARTIFICIAL_SLEEP)
 
     def handle_ping_request(self) -> None:
         """
@@ -151,11 +161,6 @@ class Writer:
         metadata = self.pull_socket.recv_json()
         data = self.pull_socket.recv_pyobj()
         return {'metadata': metadata, 'data': data}
-
-    def is_done_waiting_and_working(self) -> bool:
-        done_waiting = (perf_counter() - self.last_ping) > self.timeout
-        # done_working = (len(self.mssg_deque) == 0)
-        return done_waiting and done_working
 
 
 def main(pull_port: int, rep_port: int) -> None:
