@@ -1,3 +1,4 @@
+import re
 import subprocess
 from pathlib import PurePath
 from time import sleep
@@ -52,5 +53,53 @@ def test_writer():
 
 
 def test_spawner():
-    subprocess.run(list(map(str, [
-        PYTHON_CMD, DIR_WITH_SUT / WRITER_FILENAME])), timeout=20)
+    # assert that ip addresses are not occupied
+
+    # run the whole thing and wait for it to complete
+    p = subprocess.run(list(map(str, [
+        PYTHON_CMD, DIR_WITH_SUT / WRITER_FILENAME])),
+                       timeout=20,
+                       check=True,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       universal_newlines=True
+                       )
+
+    # test stdout and stderr
+    expected_stdout = """Trying to bind pusher and req on ports 5557, 5558
+Asking writer "are you alive?"
+No writer found
+Spawning out a writer
+Spawned writer with pid ???
+Asking writer "are you alive?"
+Yes
+Just sent message number 1
+Just sent message number 2
+Just sent message number 3
+Just sent message number 4
+Just sent message number 5
+Spawner is dead"""
+    actual_stdout = p.stdout
+    actual_stdout_processed = re.sub(r' pid \d+', r' pid ???', actual_stdout)
+    for exp, act in zip(expected_stdout.splitlines(),
+                        actual_stdout_processed.splitlines()):
+        assert exp == act
+    assert len(expected_stdout.splitlines()) == len(
+        actual_stdout_processed.splitlines())
+
+    expected_stderr = ""
+    assert expected_stderr == p.stderr
+
+    # get the pid of writer
+    writer_pid = int(re.findall(r'\d+',
+                                re.findall(r' pid \d+',
+                                           'zxc pid 123 asd')[0])[0])
+
+    # assert writer is still alive
+
+
+    # wait and assert that it died according to its timeout
+
+    # read the file it created and assert its contents
+
+    # verify that ip addresses are not occupied
