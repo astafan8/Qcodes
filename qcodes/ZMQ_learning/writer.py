@@ -70,40 +70,49 @@ class Writer:
         logger.info('init OK')
 
     def _off_main_thread_writer(self) -> None:
-        current_guid = self.guid
-
         logger.info('Off-thread writer started')
 
-        while self.keep_writer_thread_alive:
-            if not self.mssg_queue.empty():
-                mssgdict = self.mssg_queue.get()
-                guid = mssgdict['metadata']['guid']
-                chunkid = mssgdict['metadata']['chunkid']
-                datatuple = mssgdict['data']
+        try:
 
-                if current_guid != guid:
-                    logger.info("Got new guid, opening new file")
-                    current_guid = guid
-                    if self.filehandle is not None:
-                        self.filehandle.flush()
-                        self.filehandle.close()
-                    self.filehandle = open(self.guid+FILEMODES[self.mode]['extension'], 'a')
-                    self.columns = tuple(tup[0] for tup in datatuple)
-                if mssgdict['metadata']['chunkid'] == 1:
-                    logger.info('writing header')
-                    # Some file modes have an extra step on first write
-                    # (like writing a header)
+            while self.keep_writer_thread_alive:
+                if not self.mssg_queue.empty():
+                    mssgdict = self.mssg_queue.get()
+                    guid = mssgdict['metadata']['guid']
+                    chunkid = mssgdict['metadata']['chunkid']
+                    datatuple = mssgdict['data']
+
+                    if self.guid != guid:
+                        logger.info("Got new guid, opening new file")
+                        self.guid = guid
+                        if self.filehandle is not None:
+                            self.filehandle.flush()
+                            self.filehandle.close()
+                        self.filename = os.path.join(
+                            DIR_FOR_DATAFILE,
+                            self.guid + FILEMODES[self.mode]['extension']
+                        )
+                        self.filehandle = open(self.filename, 'a')
+                        self.columns = tuple(tup[0] for tup in datatuple)
+
+                    if chunkid == 1:
+                        logger.info("Writing header")
+                        # Some file modes have an extra step on first write
+                        # (like writing a header)
+                        if self.mode == 'GNUPLOT':
+                            self.gnuplot_write_header()
+
+                    # now write a line
+                    # there should be a switch-dict here
                     if self.mode == 'GNUPLOT':
-                        self.gnuplot_write_header()
-                # now write a line
-                # the should be a switch-dict here
-                if self.mode == 'GNUPLOT':
-                    logger.info(f'Writing chunk number {chunkid} to GUID {guid}')
-                    self.gnuplot_write_row(datatuple)
-                self.last_ping = perf_counter()
-                self.mssg_queue.task_done()
-            else:
-                pass
+                        logger.info(f'Writing chunk number {chunkid} to GUID {guid}')
+                        self.gnuplot_write_row(datatuple)
+
+                    self.last_ping = perf_counter()
+                    self.mssg_queue.task_done()
+                else:
+                    pass
+        except:
+            logger.exception('Exception in writer sub-thread', exc_info=True)
 
         logger.info('Off-thread writer signing off')
 
