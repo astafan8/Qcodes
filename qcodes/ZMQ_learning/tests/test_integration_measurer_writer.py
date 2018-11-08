@@ -1,16 +1,17 @@
 import os
 
-from qcodes.ZMQ_learning.measurer import Measurer, \
-    DEFAULT_SUICIDE_TIMEOUT
-from qcodes.ZMQ_learning.writer import DIR_FOR_DATAFILE, \
-    WRITE_ROW_ARTIFICIAL_SLEEP, FILEMODES, DEFAULT_FILE_MODE
+from qcodes.ZMQ_learning.file_writers import GnuplotWriter, \
+    WRITE_ROW_ARTIFICIAL_SLEEP
+from qcodes.ZMQ_learning.measurer import Measurer
+from qcodes.ZMQ_learning.common_config import DEFAULT_SUICIDE_TIMEOUT
+from qcodes.ZMQ_learning.writer import DIR_FOR_DATAFILE
 
 
-DEFAULT_PORT = 6000
+DEFAULT_STARTING_PORT = 6000
 
 
 def test_good_weather():
-    m = Measurer(DEFAULT_PORT)
+    m = Measurer(DEFAULT_STARTING_PORT)
 
     # asserts after initialization
     assert DEFAULT_SUICIDE_TIMEOUT == m._timeout
@@ -38,7 +39,7 @@ def test_good_weather():
     # find the written file
     datafile = os.path.join(
         DIR_FOR_DATAFILE,
-        guid + FILEMODES[DEFAULT_FILE_MODE]['extension']
+        guid + GnuplotWriter._extension
     )
     assert os.path.exists(datafile), f"{datafile!r} is expected to exist!"
 

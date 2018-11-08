@@ -1,17 +1,24 @@
+import math
 import os
-from time import perf_counter
+from time import perf_counter, strftime, localtime, time
 from typing import Optional, Tuple, Union, Any
 import zmq
 from zmq.sugar.socket import Socket
 import subprocess
-from time import sleep
 import uuid
 import json
 
 import qcodes.ZMQ_learning  # this is the path to the writer script
+from qcodes.ZMQ_learning.common_config import DEFAULT_SUICIDE_TIMEOUT, \
+    TRANSPORT_PROTOCOL, ADDRESS
 
 
-DEFAULT_SUICIDE_TIMEOUT = 10
+WRITER_SPAWN_SLEEP_TIME = 5
+
+PATH_TO_WRITER = os.path.join(
+    qcodes.ZMQ_learning.__file__.replace('__init__.py', ''), 'writer.py')
+
+DETACHED_PROCESS = 0x00000008
 
 
 class Measurer:
@@ -25,7 +32,6 @@ class Measurer:
         suicide_timeout: The timeout (s) before writers should kill themselves
     """
 
-    DETACHED_PROCESS = 0x00000008
     _ports_to_try: int = 10  # number of ports to try to bind to in init
 
     def __init__(self, start_port: int,
@@ -49,8 +55,7 @@ class Measurer:
         # start-up actions
         self._create_sockets(start_port)
 
-        modulepath = qcodes.ZMQ_learning.__file__.replace('__init__.py', '')
-        self._path_to_writer = os.path.join(modulepath, 'writer.py')
+        self._path_to_writer = PATH_TO_WRITER
 
         # for testing purposes ONLY
         self._current_writer_process: Optional[subprocess.Popen] = None
@@ -73,20 +78,24 @@ class Measurer:
         got_push_port = False
         for n in range(self._ports_to_try):
             try:
-                push_sock.bind(f"tcp://127.0.0.1:{start_port+n}")
+                push_sock.bind(
+                    f"{TRANSPORT_PROTOCOL}://{ADDRESS}:{start_port+n}")
                 self._push_port = start_port + n
                 got_push_port = True
                 break
             except zmq.ZMQError:
                 pass
+
         got_req_port = False
         for n in range(1, self._ports_to_try+1):
             try:
-                req_sock.connect(f"tcp://127.0.0.1:{self._push_port+n}")
+                req_sock.connect(
+                    f"{TRANSPORT_PROTOCOL}://{ADDRESS}:{self._push_port+n}")
                 self._req_port = self._push_port+n
                 break
             except zmq.ZMQError:
                 pass
+
         if not(got_push_port or got_req_port):
             raise RuntimeError('Could not find any unused ports to bind to. '
                                f'Tried from {start_port} to '
@@ -107,17 +116,19 @@ class Measurer:
         """Generate a guid (useful when testing because allows for injection)"""
         return str(uuid.uuid4())
 
-    def check_for_writer(self) -> bool:
+    def check_for_writer(self, poll_timeout=100) -> bool:
         """
         This checks for writer, but also reconfigures the writer
         """
         mssg = json.dumps({'timeout': self._timeout})
         self._req_socket.send(bytes(mssg, 'utf-8'))
-        response = dict(self.poller.poll(timeout=100))  # magic number
+        # response = dict(self.poller.poll(timeout=100))  # magic number
+        response = dict(self.poller.poll(
+            timeout=poll_timeout))  # not a magic number anymore
 
         print(response)
-        print(self._req_socket)
-        print(f"socket in response: {self._req_socket in response}")
+        print(f"socket is in response: {self._req_socket in response} "
+              f"({self._req_socket})")
 
         if self._req_socket in response:
             self._req_socket.recv()  # important to stay in-step
@@ -129,18 +140,32 @@ class Measurer:
         cmd = ["python", self._path_to_writer,
                f"{self._push_port}",
                f"{self._req_port}"]
+
+        t = time()
+        # extract 'sub' - seconds
+        subsecs, _ = math.modf(t)
+        # get milliseconds only (without microseconds and the rest)
+        millisecs = int(subsecs * 1000)
+        time_str = (strftime('%Y_%m_%d_%H_%M_%S', localtime(t))
+                    + '_' + str(millisecs))
+        print(f'Spawning writer at: {time_str}')
+
         self._current_writer_process = subprocess.Popen(
-            cmd, creationflags=self.DETACHED_PROCESS)
-        sleep(0.5)  # TODO: is any sleep required?
+            cmd, creationflags=DETACHED_PROCESS)
+        # need for this sleep is fixed by actively polling the
+        # socket for this time instead
+        # sleep(WRITER_SPAWN_SLEEP_TIME)
 
-    def _reset_sockets(self) -> None:
-            self._req_socket.setsockopt(zmq.LINGER, 0)
-            self._req_socket.close()
-            self.poller.unregister(self._req_socket)
+    def _remove_req_socket(self) -> None:
+        self._req_socket.setsockopt(zmq.LINGER, 0)
+        self._req_socket.close()
+        self.poller.unregister(self._req_socket)
 
-            self._req_socket = self._ctx.socket(zmq.REQ)
-            self._req_socket.connect(f"tcp://127.0.0.1:{self._req_port}")
-            self.poller.register(self._req_socket, zmq.POLLIN)
+    def _add_req_socket(self) -> None:
+        self._req_socket = self._ctx.socket(zmq.REQ)
+        self._req_socket.connect(
+            f"{TRANSPORT_PROTOCOL}://{ADDRESS}:{self._req_port}")
+        self.poller.register(self._req_socket, zmq.POLLIN)
 
     def add_result(self, result: Tuple[Tuple[str, Any]]) -> None:
         """
@@ -154,9 +179,16 @@ class Measurer:
 
             if not self.check_for_writer():
                 self._spawn_writer()
-                self._reset_sockets()
-                if not self.check_for_writer():
-                    self._reset_sockets()
+
+                self._remove_req_socket()
+                self._add_req_socket()
+
+                # adjust the polling time in order to actually wait for the
+                # writer to spawn and get online
+                if not self.check_for_writer(
+                        poll_timeout=1000*WRITER_SPAWN_SLEEP_TIME):
+
+                    self._remove_req_socket()
                     raise RuntimeError('Could not spawn writer. Call 911.')
 
         self._current_chunk_number += 1
