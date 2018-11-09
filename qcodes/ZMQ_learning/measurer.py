@@ -154,6 +154,8 @@ class Measurer:
 
         self._current_writer_process = subprocess.Popen(
             cmd, creationflags=DETACHED_PROCESS)
+        print(f'Spawned writer process with pid '
+              f'{self._current_writer_process.pid}')
         # need for this sleep is fixed by actively polling the
         # socket for this time instead
         # sleep(WRITER_SPAWN_SLEEP_TIME)
