@@ -57,6 +57,8 @@ class Measurer:
 
         self._path_to_writer = PATH_TO_WRITER
 
+        self._writer_spawn_sleep_time = WRITER_SPAWN_SLEEP_TIME
+
         # for testing purposes ONLY
         self._current_writer_process: Optional[subprocess.Popen] = None
 
@@ -186,7 +188,7 @@ class Measurer:
                 # adjust the polling time in order to actually wait for the
                 # writer to spawn and get online
                 if not self.check_for_writer(
-                        poll_timeout=1000*WRITER_SPAWN_SLEEP_TIME):
+                        poll_timeout=1000*self._writer_spawn_sleep_time):
 
                     self._remove_req_socket()
                     raise RuntimeError('Could not spawn writer. Call 911.')
