@@ -1,10 +1,12 @@
 import os
+from subprocess import TimeoutExpired
 
 from qcodes.ZMQ_learning.file_writers import GnuplotWriter, \
     WRITE_ROW_ARTIFICIAL_SLEEP
-from qcodes.ZMQ_learning.measurer import Measurer
+from qcodes.ZMQ_learning.measurer import Measurer, WRITER_SPAWN_SLEEP_TIME
 from qcodes.ZMQ_learning.common_config import DEFAULT_SUICIDE_TIMEOUT
-from qcodes.ZMQ_learning.writer import DIR_FOR_DATAFILE
+from qcodes.ZMQ_learning.writer import DIR_FOR_DATAFILE, \
+    WRITER_THREAD_WRAP_UP_TIMEOUT
 
 
 DEFAULT_STARTING_PORT = 6000
@@ -29,12 +31,15 @@ def test_good_weather():
         m.add_result(((p_name, val),))
 
     # sleep in order to wait for writer to complete
-    # for some reason just the artificial sleep time is not enough,
-    # and even adding a single value of timeout does not help,
-    # hence the factor of 2 for the timeout value
-    max_time_to_wait = len(vals) * WRITE_ROW_ARTIFICIAL_SLEEP * 1.1 \
-                       + m.timeout * 2
-    m._current_writer_process.wait(timeout=max_time_to_wait)
+    max_time_to_wait = WRITER_SPAWN_SLEEP_TIME \
+                       + len(vals) * (WRITE_ROW_ARTIFICIAL_SLEEP + 0.1) \
+                       + WRITER_THREAD_WRAP_UP_TIMEOUT \
+                       + m.timeout
+    try:
+        m._current_writer_process.wait(timeout=max_time_to_wait)
+    except TimeoutExpired as e:
+        m._current_writer_process.kill()
+        raise e
 
     # find the written file
     datafile = os.path.join(
