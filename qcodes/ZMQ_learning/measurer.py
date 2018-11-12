@@ -35,7 +35,8 @@ class Measurer:
     _ports_to_try: int = 10  # number of ports to try to bind to in init
 
     def __init__(self, start_port: int,
-                 suicide_timeout: Optional[float]=None) -> None:
+                 suicide_timeout: Optional[float]=None,
+                 file_format: Optional[str]=None) -> None:
 
         # ZMQ related variables
         self._ctx = zmq.Context()
@@ -48,6 +49,7 @@ class Measurer:
         # Run related variables
         self._current_chunk_number: int = 0
         self._guid = f"{'0'*8}-{'0'*4}-{'0'*4}-{'0'*4}-{'0'*12}"
+        self._file_format = file_format
 
         self._timeout = suicide_timeout or DEFAULT_SUICIDE_TIMEOUT
         self._last_write = perf_counter() - self._timeout - 1
@@ -141,7 +143,8 @@ class Measurer:
     def _spawn_writer(self) -> None:
         cmd = ["python", self._path_to_writer,
                f"{self._push_port}",
-               f"{self._req_port}"]
+               f"{self._req_port}",
+               f"{self._file_format}"]
 
         t = time()
         # extract 'sub' - seconds
@@ -227,4 +230,3 @@ class Measurer:
     @property
     def req_port(self):
         return self._req_port
-

@@ -22,7 +22,7 @@ WRITER_THREAD_WRAP_UP_TIMEOUT = 10  # set to None in order to wait forever
 
 DATA_FILE_WRITERS_MAP = {'GNUPLOT': GnuplotWriter,
                          'PICKLE': PickleWriter}
-DEFAULT_FILE_MODE = list(DATA_FILE_WRITERS_MAP.keys())[1]
+DEFAULT_FILE_MODE = list(DATA_FILE_WRITERS_MAP.keys())[0]
 
 DIR_FOR_DATAFILE = PurePath(os.path.realpath(__file__)).parent
 
@@ -50,7 +50,9 @@ class Writer:
         pull_port: port number for PULL socket
         rep_port: port number for REP socket
     """
-    def __init__(self, pull_port: int, rep_port: int):
+    def __init__(self, pull_port: int,
+                 rep_port: int,
+                 file_format: str=DEFAULT_FILE_MODE):
 
         logger.info(f'PULL port: {pull_port}, REP port: {rep_port}')
 
@@ -72,6 +74,7 @@ class Writer:
 
         # this is re-configured on the REQ-REP line
         self.timeout = DEFAULT_PING_TIMEOUT
+        self._file_format = file_format
 
         # New threading feature o.O O.o
         self.mssg_queue: Optional[Queue] = None
@@ -93,7 +96,7 @@ class Writer:
             self.mssg_queue: Queue = Queue()
             self.writer_thread = WriterThread(self.mssg_queue,
                                               self._update_last_ping,
-                                              file_mode=DEFAULT_FILE_MODE)
+                                              file_mode=self._file_format)
             self.writer_thread.start()
 
             self._update_last_ping()
@@ -295,21 +298,25 @@ def _parse_arguments():
                         help='port to pull for data')
     parser.add_argument('rep_port', metavar='rep_port', type=int,
                         help='port to reply to with status')
+    parser.add_argument('file_format', metavar='file_format', type=str,
+                        help='format in which to write the data to disk. '
+                        'Currently supported: GnuplotWriter, PickleWriter')
 
     args = parser.parse_args()
 
     pull_port = args.pull_port
     rep_port = args.rep_port
+    file_format = args.file_format
 
-    return pull_port, rep_port
+    return pull_port, rep_port, file_format
 
 
 def main() -> int:
     """
     ...
     """
-    pull_port, rep_port = _parse_arguments()
-    writer = Writer(pull_port, rep_port)
+    pull_port, rep_port, file_format = _parse_arguments()
+    writer = Writer(pull_port, rep_port, file_format)
     writer.run_message_processing_loop()
     return 0
 
