@@ -12,7 +12,7 @@ from threading import Thread, Lock
 import zmq
 from zmq.sugar.socket import Socket
 
-from qcodes.ZMQ_learning.file_writers import GnuplotWriter
+from qcodes.ZMQ_learning.file_writers import GnuplotWriter, PickleWriter
 from qcodes.ZMQ_learning.common_config import DEFAULT_SUICIDE_TIMEOUT, ADDRESS,\
     TRANSPORT_PROTOCOL
 
@@ -20,8 +20,9 @@ from qcodes.ZMQ_learning.common_config import DEFAULT_SUICIDE_TIMEOUT, ADDRESS,\
 DEFAULT_PING_TIMEOUT = DEFAULT_SUICIDE_TIMEOUT
 WRITER_THREAD_WRAP_UP_TIMEOUT = 10  # set to None in order to wait forever
 
-DATA_FILE_WRITERS_MAP = {'GNUPLOT': GnuplotWriter}
-DEFAULT_FILE_MODE = list(DATA_FILE_WRITERS_MAP.keys())[0]
+DATA_FILE_WRITERS_MAP = {'GNUPLOT': GnuplotWriter,
+                         'PICKLE': PickleWriter}
+DEFAULT_FILE_MODE = list(DATA_FILE_WRITERS_MAP.keys())[1]
 
 DIR_FOR_DATAFILE = PurePath(os.path.realpath(__file__)).parent
 
