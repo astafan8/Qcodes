@@ -234,6 +234,33 @@ class DataSet(BaseDataSet):
     )
     background_sleep_time = 1e-3
 
+    #: Whether this dataset stores its results table in the main database.
+    #: Subclasses that keep raw data in a separate backend (e.g.
+    #: :class:`DataSetInSeparateSqliteDbFile`) set this to ``False`` so that no
+    #: results table is created in the main database.
+    _creates_results_table_in_main_db: bool = True
+
+    def _setup_results_backend_on_load(self, *, read_only: bool) -> None:
+        """Hook: set up the results backend when loading an existing run.
+
+        No-op for a plain :class:`DataSet` (results live in the main database).
+        Subclasses use this to e.g. connect to a per-dataset raw data file.
+        """
+
+    def _setup_results_backend_on_new_run(self) -> None:
+        """Hook: record results-backend bookkeeping for a newly created run.
+
+        No-op for a plain :class:`DataSet`. Subclasses use this to e.g. record
+        the location of the per-dataset raw data file in the ``runs`` table.
+        """
+
+    def _setup_results_backend_on_start(self) -> None:
+        """Hook: create/open the results backend when the run is started.
+
+        No-op for a plain :class:`DataSet`. Subclasses use this to e.g. create
+        the per-dataset raw data file and its results table.
+        """
+
     def __init__(
         self,
         path_to_db: str | None = None,
@@ -324,24 +351,10 @@ class DataSet(BaseDataSet):
             self._export_info = ExportInfo.from_str(
                 self.metadata.get("export_info", "")
             )
-            # If this dataset was saved with raw data in a separate db,
-            # re-open that connection for reads. The path is stored in a
-            # dedicated runs-table column, not in the user-facing metadata.
-            raw_db_path = get_raw_data_db_path_for_run(self.conn, self.run_id)
-            self._raw_data_db_path = raw_db_path
-            if raw_db_path is not None:
-                if Path(raw_db_path).is_file():
-                    self._raw_data_conn = connect_to_raw_data_db(
-                        raw_db_path, read_only=read_only
-                    )
-                elif self._started:
-                    raise FileNotFoundError(
-                        f"Raw data file for dataset {self.guid} not found at "
-                        f"'{raw_db_path}'. The per-dataset SQLite file may "
-                        f"have been moved or deleted."
-                    )
-                # else: the dataset was never started, so the raw data file has
-                # not been created yet - there is simply no data to connect to.
+            # Delegate any results-backend setup (e.g. connecting to a
+            # per-dataset raw data file) to subclasses. For a plain DataSet
+            # this is a no-op since results live in the main database.
+            self._setup_results_backend_on_load(read_only=read_only)
         else:
             # Actually perform all the side effects needed for the creation
             # of a new dataset. Note that a dataset is created (in the DB)
@@ -350,9 +363,10 @@ class DataSet(BaseDataSet):
             if exp_id is None:
                 exp_id = get_default_experiment_id(self.conn)
             name = name or "dataset"
-            # When raw data is stored in a separate backend (e.g. a per-dataset
-            # SQLite file), no results table is created in the main database -
-            # only the run metadata is kept there. This mirrors how
+            # Subclasses that store results outside the main database (e.g. in
+            # a per-dataset SQLite file) set ``_creates_results_table_in_main_db``
+            # to False, so no results table is created here - only the run
+            # metadata is kept in the main database. This mirrors how
             # ``DataSetInMem`` records runs without a results table.
             _, run_id, __ = create_run(
                 self.conn,
@@ -362,7 +376,7 @@ class DataSet(BaseDataSet):
                 parameters=None,
                 values=values,
                 metadata=metadata,
-                create_run_table=not is_raw_data_storage_enabled(),
+                create_run_table=self._creates_results_table_in_main_db,
             )
             # this is really the UUID (an ever increasing count in the db)
             self._run_id = run_id
@@ -382,17 +396,10 @@ class DataSet(BaseDataSet):
             self._parent_dataset_links = []
             self._export_info = ExportInfo({})
 
-            if is_raw_data_storage_enabled():
-                # Record the raw-data backend location up front. This marks the
-                # run as a split-storage dataset (so it can be told apart from a
-                # ``DataSetInMem`` run, which also has no results table) even
-                # before it is started and before the raw data file is created.
-                # The path is stored in a dedicated column, not in the
-                # user-facing metadata.
-                raw_path_str = str(get_raw_data_db_path(self.guid))
-                self._raw_data_db_path = raw_path_str
-                with atomic(self.conn) as aconn:
-                    set_raw_data_db_path_for_run(aconn, self.run_id, raw_path_str)
+            # Let subclasses record any results-backend bookkeeping for the new
+            # run (e.g. the location of the per-dataset raw data file). No-op
+            # for a plain DataSet.
+            self._setup_results_backend_on_new_run()
         assert self.path_to_db is not None
         if _WRITERS.get(self.path_to_db) is None:
             queue: Queue[Any] = Queue()
@@ -775,37 +782,21 @@ class DataSet(BaseDataSet):
         Perform the actions that must take place once the run has been started
         """
         paramspecs = new_to_old(self._rundescriber.interdeps).paramspecs
-        raw_data_enabled = is_raw_data_storage_enabled()
 
         for spec in paramspecs:
             add_parameter(
                 spec,
                 conn=self.conn,
                 run_id=self.run_id,
-                # The results table only lives in the main database when raw
-                # data storage is disabled; with it enabled the parameter
-                # columns are created in the per-dataset raw data file below.
-                insert_into_results_table=not raw_data_enabled,
+                # The results table only lives in the main database for a plain
+                # DataSet; subclasses that use a separate backend create the
+                # parameter columns there in _setup_results_backend_on_start.
+                insert_into_results_table=self._creates_results_table_in_main_db,
             )
 
-        # When raw data split is enabled, create a per-dataset SQLite file
-        # for results data with the full results table.
-        if raw_data_enabled:
-            # The raw-data path was already recorded at dataset creation time;
-            # reuse it so both locations stay in sync.
-            raw_path_str = self._raw_data_db_path or str(
-                get_raw_data_db_path(self.guid)
-            )
-            raw_db_path = Path(raw_path_str)
-            self._raw_data_conn = create_raw_data_db(
-                raw_db_path,
-                self.table_name,
-                self._rundescriber.interdeps.paramspecs,
-            )
-            if self._raw_data_db_path != raw_path_str:
-                self._raw_data_db_path = raw_path_str
-                with atomic(self.conn) as aconn:
-                    set_raw_data_db_path_for_run(aconn, self.run_id, raw_path_str)
+        # Let subclasses create/open their results backend (e.g. a per-dataset
+        # SQLite file with the full results table). No-op for a plain DataSet.
+        self._setup_results_backend_on_start()
 
         desc_str = serial.to_json_for_storage(self.description)
 
@@ -1779,6 +1770,97 @@ class DataSet(BaseDataSet):
         return row_size * len(self) / 1024 / 1024
 
 
+class DataSetInSeparateSqliteDbFile(DataSet):
+    """A :class:`DataSet` whose raw measurement data is stored in an
+    individual, per-dataset SQLite file while all metadata remains in the main
+    database.
+
+    This is the concrete backend behind the ``dataset.raw_data_to_separate_db``
+    config option. The per-dataset file is named ``<guid>.db`` and lives in the
+    folder given by ``dataset.raw_data_path``. Only the results-backend setup
+    differs from a plain :class:`DataSet`: the generic "results live on a
+    separate connection" routing (``_data_conn``, ``get_parameter_data``,
+    ``add_results``) is provided by the base class and activated once
+    ``_raw_data_conn`` is populated here.
+
+    The path to the per-dataset file is recorded in a dedicated
+    ``raw_data_db_path`` column of the ``runs`` table (not in the user-facing
+    metadata), which is also how such runs are recognised when loading.
+    """
+
+    _creates_results_table_in_main_db = False
+
+    def _setup_results_backend_on_load(self, *, read_only: bool) -> None:
+        # Re-open the per-dataset raw data file for reads. The path is stored
+        # in a dedicated runs-table column, not in the user-facing metadata.
+        raw_db_path = get_raw_data_db_path_for_run(self.conn, self.run_id)
+        self._raw_data_db_path = raw_db_path
+        if raw_db_path is not None:
+            if Path(raw_db_path).is_file():
+                self._raw_data_conn = connect_to_raw_data_db(
+                    raw_db_path, read_only=read_only
+                )
+            elif self._started:
+                raise FileNotFoundError(
+                    f"Raw data file for dataset {self.guid} not found at "
+                    f"'{raw_db_path}'. The per-dataset SQLite file may "
+                    f"have been moved or deleted."
+                )
+            # else: the dataset was never started, so the raw data file has
+            # not been created yet - there is simply no data to connect to.
+
+    def _setup_results_backend_on_new_run(self) -> None:
+        # Record the raw-data backend location up front. This marks the run as
+        # a split-storage dataset (so it can be told apart from a DataSetInMem
+        # run, which also has no results table) even before it is started and
+        # before the raw data file is created.
+        raw_path_str = str(get_raw_data_db_path(self.guid))
+        self._raw_data_db_path = raw_path_str
+        with atomic(self.conn) as aconn:
+            set_raw_data_db_path_for_run(aconn, self.run_id, raw_path_str)
+
+    def _setup_results_backend_on_start(self) -> None:
+        # Create the per-dataset SQLite file with the full results table. The
+        # path was already recorded at creation time; reuse it so both stay in
+        # sync.
+        raw_path_str = self._raw_data_db_path or str(get_raw_data_db_path(self.guid))
+        raw_db_path = Path(raw_path_str)
+        self._raw_data_conn = create_raw_data_db(
+            raw_db_path,
+            self.table_name,
+            self._rundescriber.interdeps.paramspecs,
+        )
+        if self._raw_data_db_path != raw_path_str:
+            self._raw_data_db_path = raw_path_str
+            with atomic(self.conn) as aconn:
+                set_raw_data_db_path_for_run(aconn, self.run_id, raw_path_str)
+
+
+def _load_dataset_from_run_id(
+    conn: AtomicConnection | None = None,
+    run_id: int | None = None,
+    *,
+    path_to_db: str | None = None,
+    read_only: bool = False,
+) -> DataSet:
+    """Instantiate the appropriate DataSet class for an existing run.
+
+    Returns a :class:`DataSetInSeparateSqliteDbFile` when the run records a
+    ``raw_data_db_path`` (raw data stored in a separate SQLite file), otherwise
+    a plain :class:`DataSet`. This is the recommended way to load an existing
+    run into a :class:`DataSet` object when not going through the public
+    ``load_by_*`` functions, since it selects the correct subclass.
+    """
+    if run_id is None:
+        raise ValueError("run_id must be provided")
+    conn = conn_from_dbpath_or_conn(conn, path_to_db, read_only=read_only)
+    if get_raw_data_db_path_for_run(conn, run_id) is not None:
+        return DataSetInSeparateSqliteDbFile(
+            run_id=run_id, conn=conn, read_only=read_only
+        )
+    return DataSet(run_id=run_id, conn=conn, read_only=read_only)
+
+
 # public api
 def load_by_run_spec(
     *,
@@ -2094,7 +2176,7 @@ def _get_datasetprotocol_from_guid(
     # raw_data_db_path; anything else without a results table is an
     # in-memory (netcdf-backed) dataset.
     elif get_raw_data_db_path_for_run(conn, run_id) is not None:
-        d = DataSet(conn=conn, run_id=run_id)
+        d = DataSetInSeparateSqliteDbFile(conn=conn, run_id=run_id)
     else:
         d = DataSetInMem._load_from_db(conn=conn, guid=guid)
 
@@ -2139,7 +2221,12 @@ def new_data_set(
     """
     # note that passing `conn` is a secret feature that is unfortunately used
     # in `Runner` to pass a connection from an existing `Experiment`.
-    d = DataSet(
+    # Choose the concrete class based on whether split raw data storage is
+    # enabled in the config.
+    dataset_class = (
+        DataSetInSeparateSqliteDbFile if is_raw_data_storage_enabled() else DataSet
+    )
+    d = dataset_class(
         path_to_db=None,
         run_id=None,
         conn=conn,
