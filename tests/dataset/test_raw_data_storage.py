@@ -30,7 +30,11 @@ from qcodes.dataset._raw_data_storage import (
     purge_orphaned_datasets,
     update_raw_data_paths,
 )
-from qcodes.dataset.data_set import DataSet, load_by_id
+from qcodes.dataset.data_set import (
+    DataSet,
+    DataSetInSeparateSqliteDbFile,
+    load_by_id,
+)
 from qcodes.dataset.database_extract_runs import (
     export_datasets_and_create_metadata_db,
     extract_runs_into_db,
@@ -191,6 +195,22 @@ class TestDataSetWithSplitRawData:
         ds.mark_started()
         assert ds._raw_data_conn is not None
         self._close_ds(ds)
+
+    def test_new_data_set_returns_separate_file_subclass(self) -> None:
+        """When split is enabled, new_data_set returns the dedicated subclass."""
+        ds = new_data_set("test-split")
+        assert isinstance(ds, DataSetInSeparateSqliteDbFile)
+        self._close_ds(ds)
+
+    def test_loaded_dataset_is_separate_file_subclass(self) -> None:
+        """Loading a split dataset returns the dedicated subclass."""
+        ds, _ = self._make_dataset_with_data(n_rows=3)
+        run_id = ds.run_id
+        self._close_ds(ds)
+
+        loaded = load_by_id(run_id)
+        assert isinstance(loaded, DataSetInSeparateSqliteDbFile)
+        self._close_ds(loaded)
 
     def test_raw_data_file_created(self, tmp_path: Path) -> None:
         """A per-dataset SQLite file should be created."""
@@ -388,6 +408,13 @@ class TestDataSetWithSplitRawData:
 
 @pytest.mark.usefixtures("experiment")
 class TestDataSetWithoutSplitRawData:
+    def test_new_data_set_returns_plain_dataset(self) -> None:
+        """When split is disabled, new_data_set returns a plain DataSet."""
+        ds = new_data_set("test-no-split")
+        assert isinstance(ds, DataSet)
+        assert not isinstance(ds, DataSetInSeparateSqliteDbFile)
+        ds.conn.close()
+
     def test_raw_data_conn_is_none(self) -> None:
         """When split is disabled, _raw_data_conn should be None."""
         ds = new_data_set("test-no-split")

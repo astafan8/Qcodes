@@ -20,7 +20,7 @@ from qcodes.dataset import (
     new_data_set,
     new_experiment,
 )
-from qcodes.dataset.data_set import DataSet
+from qcodes.dataset.data_set import DataSet, _load_dataset_from_run_id
 from qcodes.dataset.data_set_protocol import CompletedError
 from qcodes.dataset.descriptions.dependencies import InterDependencies_
 from qcodes.dataset.descriptions.rundescriber import RunDescriber
@@ -54,7 +54,9 @@ def make_shadow_dataset(dataset: DataSet):
     database file.
     """
 
-    return DataSet(path_to_db=dataset.path_to_db, run_id=dataset.run_id)
+    return _load_dataset_from_run_id(
+        path_to_db=dataset.path_to_db, run_id=dataset.run_id
+    )
 
 
 @pytest.mark.usefixtures("experiment")

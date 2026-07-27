@@ -26,7 +26,12 @@ from opentelemetry import trace
 
 import qcodes as qc
 import qcodes.validators as vals
-from qcodes.dataset.data_set import DataSet, load_by_guid
+from qcodes.dataset._raw_data_storage import is_raw_data_storage_enabled
+from qcodes.dataset.data_set import (
+    DataSet,
+    DataSetInSeparateSqliteDbFile,
+    load_by_guid,
+)
 from qcodes.dataset.data_set_in_memory import DataSetInMem
 from qcodes.dataset.data_set_protocol import (
     DataSetProtocol,
@@ -636,7 +641,14 @@ class Runner:
             conn = None
 
         if self._dataset_class is DataSetType.DataSet:
-            self.ds = DataSet(
+            # When split raw data storage is enabled, use the subclass that
+            # writes results to a per-dataset SQLite file.
+            dataset_cls = (
+                DataSetInSeparateSqliteDbFile
+                if is_raw_data_storage_enabled()
+                else DataSet
+            )
+            self.ds = dataset_cls(
                 name=self.name,
                 exp_id=exp_id,
                 conn=conn,

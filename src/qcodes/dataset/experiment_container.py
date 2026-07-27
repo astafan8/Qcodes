@@ -5,7 +5,12 @@ from collections.abc import Sized
 from typing import TYPE_CHECKING, Any
 from warnings import warn
 
-from qcodes.dataset.data_set import DataSet, load_by_id, new_data_set
+from qcodes.dataset.data_set import (
+    DataSet,
+    _load_dataset_from_run_id,
+    load_by_id,
+    new_data_set,
+)
 from qcodes.dataset.experiment_settings import _set_default_experiment_id
 from qcodes.dataset.sqlite.connection import AtomicConnection, path_to_dbfile
 from qcodes.dataset.sqlite.database import (
@@ -168,7 +173,7 @@ class Experiment(Sized):
 
         """
         run_id = get_runid_from_expid_and_counter(self.conn, self.exp_id, counter)
-        return DataSet(run_id=run_id, conn=self.conn)
+        return _load_dataset_from_run_id(self.conn, run_id)
 
     def data_sets(self) -> list[DataSetProtocol]:
         """Get all the datasets of this experiment"""
