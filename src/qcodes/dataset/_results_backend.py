@@ -28,20 +28,27 @@ from qcodes.dataset._raw_data_storage import (
     get_raw_data_db_path,
     is_raw_data_storage_enabled,
 )
-from qcodes.dataset.sqlite.connection import atomic
+from qcodes.dataset.sqlite.connection import atomic, atomic_transaction
 from qcodes.dataset.sqlite.queries import (
+    _check_if_table_found,
     get_parameter_data,
     get_raw_data_db_path_for_run,
     get_shaped_parameter_data_for_one_paramtree,
     set_raw_data_db_path_for_run,
 )
+from qcodes.dataset.sqlite.query_helpers import (
+    insert_many_values,
+    length,
+    one,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from qcodes.dataset.data_set import DataSet
     from qcodes.dataset.data_set_protocol import ParameterData
     from qcodes.dataset.sqlite.connection import AtomicConnection
+    from qcodes.dataset.sqlite.query_helpers import VALUE
 
 log = logging.getLogger(__name__)
 
@@ -49,10 +56,17 @@ log = logging.getLogger(__name__)
 class ResultsBackend:
     """Strategy describing where a :class:`.DataSet`'s results data lives.
 
-    The default implementation keeps the results table in the main QCoDeS
-    database. Subclasses store results elsewhere while metadata remains in the
+    The backend hides *where and how* the results table is stored: the default
+    implementation keeps it in the main QCoDeS database, while subclasses store
+    it elsewhere (e.g. a per-dataset SQLite file) with metadata remaining in the
     main database. A backend is owned by exactly one dataset, passed in at
     construction time.
+
+    The only connection a caller ever needs is :attr:`results_conn` - the
+    connection on which the results table lives. Collaborators that must operate
+    on the table directly (the cache and subscribers) use it; everything else
+    goes through the operation methods below so that the storage details stay
+    encapsulated here.
     """
 
     #: Whether ``create_run`` should create the results table in the main
@@ -63,21 +77,11 @@ class ResultsBackend:
         self._dataset = dataset
 
     @property
-    def data_conn(self) -> AtomicConnection:
-        """The connection used for all results-table reads and writes."""
+    def results_conn(self) -> AtomicConnection:
+        """The connection on which the results table lives."""
         return self._dataset.conn
 
-    @property
-    def raw_data_conn(self) -> AtomicConnection | None:
-        """The separate results connection, or ``None`` when results live in
-        the main database."""
-        return None
-
-    @property
-    def raw_data_db_path(self) -> str | None:
-        """Path to the separate results file, or ``None`` for the main
-        database."""
-        return None
+    # -- lifecycle -------------------------------------------------------
 
     def setup_on_load(self, *, read_only: bool) -> None:
         """Set up the backend for an existing run being loaded. No-op here."""
@@ -86,8 +90,39 @@ class ResultsBackend:
         """Record backend bookkeeping for a newly created run. No-op here."""
 
     def setup_on_start(self) -> None:
-        """Create/open the results backend when the run is started. No-op
-        here."""
+        """Create/open the results store when the run is started. No-op here."""
+
+    def close(self) -> None:
+        """Close any resources owned by the backend. No-op here."""
+
+    # -- results-table operations ----------------------------------------
+
+    def results_table_exists(self) -> bool:
+        """Whether the physical results table currently exists."""
+        return _check_if_table_found(self.results_conn, self._dataset.table_name)
+
+    def number_of_results(self) -> int:
+        """Number of rows in the results table (``0`` if it does not exist)."""
+        if not self.results_table_exists():
+            return 0
+        sql = f'SELECT COUNT(*) FROM "{self._dataset.table_name}"'
+        cursor = atomic_transaction(self.results_conn, sql)
+        return one(cursor, "COUNT(*)")
+
+    def results_length(self) -> int:
+        """Length of the results table (max row id, ``0`` if it does not
+        exist)."""
+        if not self.results_table_exists():
+            return 0
+        return length(self.results_conn, self._dataset.table_name)
+
+    def insert_results(
+        self, param_names: Sequence[str], values: Sequence[Sequence[VALUE]]
+    ) -> None:
+        """Insert rows of results directly (used for non-background writes)."""
+        insert_many_values(
+            self.results_conn, self._dataset.table_name, list(param_names), values
+        )
 
     def prepare_background_write_item(self, item: dict[str, Any]) -> None:
         """Augment a background-writer queue item for this backend. No-op
@@ -102,16 +137,13 @@ class ResultsBackend:
     ) -> ParameterData:
         """Read parameter data for the given parameters from the backend."""
         return get_parameter_data(
-            self.data_conn,
+            self.results_conn,
             self._dataset.table_name,
             valid_param_names,
             start,
             end,
             callback,
         )
-
-    def close(self) -> None:
-        """Close any resources owned by the backend. No-op here."""
 
 
 class MainDatabaseResultsBackend(ResultsBackend):
@@ -135,21 +167,14 @@ class SeparateSqliteFileResultsBackend(ResultsBackend):
         self._db_path: str | None = None
 
     @property
-    def data_conn(self) -> AtomicConnection:
-        # Before the dataset is started the raw file does not exist yet, so fall
-        # back to the main connection. The main connection has no results table
-        # either, which callers handle via ``DataSet._results_table_exists``.
+    def results_conn(self) -> AtomicConnection:
+        # Before the dataset is started the per-dataset file does not exist yet,
+        # so fall back to the main connection. The main connection has no
+        # results table either, which the operation methods handle via
+        # ``results_table_exists``.
         if self._conn is not None:
             return self._conn
         return self._dataset.conn
-
-    @property
-    def raw_data_conn(self) -> AtomicConnection | None:
-        return self._conn
-
-    @property
-    def raw_data_db_path(self) -> str | None:
-        return self._db_path
 
     def setup_on_load(self, *, read_only: bool) -> None:
         ds = self._dataset
@@ -212,7 +237,7 @@ class SeparateSqliteFileResultsBackend(ResultsBackend):
             # Not started yet / no separate file: defer to the default reader,
             # which will find no results table and return empty data.
             return super().read_parameter_data(valid_param_names, start, end, callback)
-        # When raw data lives in a separate DB, bypass get_parameter_data (which
+        # When results live in a separate DB, bypass get_parameter_data (which
         # looks up the rundescriber from the main DB) and call the lower-level
         # function directly with the rundescriber we already hold.
         output: ParameterData = {}
