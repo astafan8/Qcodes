@@ -77,8 +77,6 @@ from qcodes.dataset.sqlite.query_helpers import (
     VALUE,
     VALUES,
     insert_many_values,
-    length,
-    one,
     select_one_where,
 )
 from qcodes.utils import (
@@ -406,38 +404,26 @@ class DataSet(BaseDataSet):
         return self._cache
 
     @property
-    def _data_conn(self) -> AtomicConnection:
-        """Connection to use for results-table data operations.
+    def _results_conn(self) -> AtomicConnection:
+        """The connection on which this dataset's results table lives.
 
-        Delegates to the results backend, which returns the separate results
-        connection when one is in use, or the main database connection
-        otherwise.
+        Delegates to the results backend: the main database connection by
+        default, or a separate per-dataset connection when the results are
+        stored elsewhere. Collaborators that operate on the results table
+        directly (the cache and subscribers) use this.
         """
-        return self._results_backend.data_conn
-
-    @property
-    def _raw_data_conn(self) -> AtomicConnection | None:
-        """The separate results-data connection, or ``None`` when results are
-        stored in the main database. Kept for convenience/backwards
-        compatibility; the connection is owned by the results backend."""
-        return self._results_backend.raw_data_conn
-
-    @property
-    def _raw_data_db_path(self) -> str | None:
-        """Path to the separate per-dataset results file, or ``None`` when
-        results are stored in the main database."""
-        return self._results_backend.raw_data_db_path
+        return self._results_backend.results_conn
 
     @property
     def _results_table_exists(self) -> bool:
-        """Whether the physical results table exists on the data connection.
+        """Whether the physical results table currently exists.
 
-        When raw data storage is enabled the results table is created in the
-        per-dataset raw data file only once the dataset has been started, so
-        before that (and in the main database in general) no results table
-        exists. Callers that count rows must handle this case.
+        With a separate results backend the table is created only once the
+        dataset has been started, so before that (and in the main database in
+        general) no results table exists. Callers that count rows must handle
+        this case.
         """
-        return _check_if_table_found(self._data_conn, self.table_name)
+        return self._results_backend.results_table_exists()
 
     @property
     def run_id(self) -> int:
@@ -500,11 +486,7 @@ class DataSet(BaseDataSet):
 
     @property
     def number_of_results(self) -> int:
-        if not self._results_table_exists:
-            return 0
-        sql = f'SELECT COUNT(*) FROM "{self.table_name}"'
-        cursor = atomic_transaction(self._data_conn, sql)
-        return one(cursor, "COUNT(*)")
+        return self._results_backend.number_of_results()
 
     @property
     def counter(self) -> int:
@@ -877,9 +859,7 @@ class DataSet(BaseDataSet):
             self._results_backend.prepare_background_write_item(item)
             writer_status.data_write_queue.put(item)
         else:
-            insert_many_values(
-                self._data_conn, self.table_name, list(expected_keys), values
-            )
+            self._results_backend.insert_results(list(expected_keys), values)
 
     def _raise_if_not_writable(self) -> None:
         if self.pristine:
@@ -1361,7 +1341,7 @@ class DataSet(BaseDataSet):
             # Not yet materialised into a real subscriber/trigger.
             del self._pending_subscribers[uuid]
             return
-        with atomic(self._data_conn) as conn:
+        with atomic(self._results_conn) as conn:
             sub = self.subscribers[uuid]
             remove_trigger(conn, sub.trigger_id)
             sub.schedule_stop()
@@ -1376,7 +1356,7 @@ class DataSet(BaseDataSet):
         SELECT name FROM sqlite_master
         WHERE type = 'trigger'
         """
-        data_conn = self._data_conn
+        data_conn = self._results_conn
         triggers = atomic_transaction(data_conn, sql).fetchall()
         with atomic(data_conn) as conn:
             for (trigger,) in triggers:
@@ -1391,9 +1371,7 @@ class DataSet(BaseDataSet):
         return get_data_by_tag_and_table_name(self.conn, tag, self.table_name)
 
     def __len__(self) -> int:
-        if not self._results_table_exists:
-            return 0
-        return length(self._data_conn, self.table_name)
+        return self._results_backend.results_length()
 
     def __repr__(self) -> str:
         out = []
