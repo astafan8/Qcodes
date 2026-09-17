@@ -211,9 +211,7 @@ class SeparateSqliteFileResultsBackend(ResultsBackend):
         if self._conn is None:
             # Not started yet / no separate file: defer to the default reader,
             # which will find no results table and return empty data.
-            return super().read_parameter_data(
-                valid_param_names, start, end, callback
-            )
+            return super().read_parameter_data(valid_param_names, start, end, callback)
         # When raw data lives in a separate DB, bypass get_parameter_data (which
         # looks up the rundescriber from the main DB) and call the lower-level
         # function directly with the rundescriber we already hold.
