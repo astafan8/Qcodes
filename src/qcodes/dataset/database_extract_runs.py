@@ -11,7 +11,7 @@ import numpy as np
 from opentelemetry import trace
 from tqdm.auto import tqdm
 
-from qcodes.dataset.data_set import DataSet, load_by_id
+from qcodes.dataset.data_set import DataSet, _load_dataset_from_run_id, load_by_id
 from qcodes.dataset.data_set_in_memory import load_from_netcdf
 from qcodes.dataset.dataset_helpers import _add_run_to_runs_table
 from qcodes.dataset.experiment_container import _create_exp_if_needed
@@ -132,7 +132,9 @@ def extract_runs_into_db(
             # Finally insert the runs
             for run_id in run_ids:
                 _extract_single_dataset_into_db(
-                    DataSet(run_id=run_id, conn=source_conn), target_conn, target_exp_id
+                    _load_dataset_from_run_id(source_conn, run_id),
+                    target_conn,
+                    target_exp_id,
                 )
     finally:
         source_conn.close()
@@ -378,7 +380,7 @@ def _copy_dataset_as_is(
     target_exp_id: int,
 ) -> Literal["copied_as_is", "failed"]:
     try:
-        dataset_obj = DataSet(run_id=dataset.run_id, conn=source_conn)
+        dataset_obj = _load_dataset_from_run_id(source_conn, dataset.run_id)
         with atomic(target_conn) as target_conn_atomic:
             _extract_single_dataset_into_db(
                 dataset_obj, target_conn_atomic, target_exp_id
