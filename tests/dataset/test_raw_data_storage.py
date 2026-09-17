@@ -30,6 +30,10 @@ from qcodes.dataset._raw_data_storage import (
     purge_orphaned_datasets,
     update_raw_data_paths,
 )
+from qcodes.dataset._results_backend import (
+    MainDatabaseResultsBackend,
+    SeparateSqliteFileResultsBackend,
+)
 from qcodes.dataset.data_set import DataSet, load_by_id
 from qcodes.dataset.database_extract_runs import (
     export_datasets_and_create_metadata_db,
@@ -191,6 +195,33 @@ class TestDataSetWithSplitRawData:
         ds.mark_started()
         assert ds._raw_data_conn is not None
         self._close_ds(ds)
+
+    def test_new_data_set_uses_separate_file_backend(self) -> None:
+        """When split is enabled, new datasets use the separate-file backend."""
+        ds = new_data_set("test-split")
+        assert isinstance(ds, DataSet)
+        assert isinstance(ds._results_backend, SeparateSqliteFileResultsBackend)
+        self._close_ds(ds)
+
+    def test_loaded_dataset_autodetects_backend(self) -> None:
+        """A split dataset is detected as such however it is loaded, including
+        via direct DataSet(run_id=...) construction."""
+        ds, _ = self._make_dataset_with_data(n_rows=3)
+        run_id = ds.run_id
+        path_to_db = ds.path_to_db
+        self._close_ds(ds)
+
+        # via the public load_by_id
+        loaded = load_by_id(run_id)
+        assert isinstance(loaded, DataSet)
+        assert isinstance(loaded._results_backend, SeparateSqliteFileResultsBackend)
+        self._close_ds(loaded)
+
+        # via direct DataSet construction (auto-detection, no factory needed)
+        direct = DataSet(path_to_db=path_to_db, run_id=run_id)
+        assert isinstance(direct._results_backend, SeparateSqliteFileResultsBackend)
+        assert direct._raw_data_conn is not None
+        self._close_ds(direct)
 
     def test_raw_data_file_created(self, tmp_path: Path) -> None:
         """A per-dataset SQLite file should be created."""
@@ -388,6 +419,14 @@ class TestDataSetWithSplitRawData:
 
 @pytest.mark.usefixtures("experiment")
 class TestDataSetWithoutSplitRawData:
+    def test_uses_main_database_backend(self) -> None:
+        """When split is disabled, datasets use the main-database backend."""
+        ds = new_data_set("test-no-split")
+        assert isinstance(ds._results_backend, MainDatabaseResultsBackend)
+        assert ds._raw_data_conn is None
+        assert ds._raw_data_db_path is None
+        ds.conn.close()
+
     def test_raw_data_conn_is_none(self) -> None:
         """When split is disabled, _raw_data_conn should be None."""
         ds = new_data_set("test-no-split")
