@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from qcodes.dataset._raw_data_storage import (
     connect_to_raw_data_db,
@@ -56,11 +56,22 @@ log = logging.getLogger(__name__)
 class ResultsBackend:
     """Strategy describing where a :class:`.DataSet`'s results data lives.
 
-    The backend hides *where and how* the results table is stored: the default
-    implementation keeps it in the main QCoDeS database, while subclasses store
-    it elsewhere (e.g. a per-dataset SQLite file) with metadata remaining in the
+    The backend hides *where and how* the results table is stored: the base
+    class keeps it in the main QCoDeS database, while subclasses store it
+    elsewhere (e.g. a per-dataset SQLite file) with metadata remaining in the
     main database. A backend is owned by exactly one dataset, passed in at
     construction time.
+
+    Subclasses customise only what actually differs between storage locations:
+    the connection the results table lives on (:attr:`results_conn`), the
+    lifecycle hooks (``setup_on_*`` / :meth:`close`), whether the main database
+    creates a results table (:attr:`creates_results_table_in_main_db`), the
+    background-write target (:attr:`results_db_path`), and - when the read path
+    differs - :meth:`read_parameter_data`. The results-table *operations* below
+    (existence check, counting, inserting, reading) are written against
+    :attr:`results_conn` and are therefore generic: both the main-database and
+    the separate-file backend reuse them unchanged, which is why
+    :class:`MainDatabaseResultsBackend` needs no code of its own.
 
     The only connection a caller ever needs is :attr:`results_conn` - the
     connection on which the results table lives. Collaborators that must operate
@@ -124,9 +135,17 @@ class ResultsBackend:
             self.results_conn, self._dataset.table_name, list(param_names), values
         )
 
-    def prepare_background_write_item(self, item: dict[str, Any]) -> None:
-        """Augment a background-writer queue item for this backend. No-op
-        here."""
+    @property
+    def results_db_path(self) -> str | None:
+        """Path of the file that holds the results table for this dataset.
+
+        Returns ``None`` when the results are stored in the main database (the
+        default). A backend that keeps results in a separate file returns that
+        file's path here. It lets the ``DataSet`` route background writes to the
+        correct file without the backend needing to know anything about the
+        background-writer's queue-item format.
+        """
+        return None
 
     def read_parameter_data(
         self,
@@ -147,7 +166,12 @@ class ResultsBackend:
 
 
 class MainDatabaseResultsBackend(ResultsBackend):
-    """Store results in the main QCoDeS database (the default behaviour)."""
+    """Store results in the main QCoDeS database (the default behaviour).
+
+    This is the reference behaviour, so it deliberately adds nothing: the base
+    class's ``results_conn`` (the main database connection) and its generic
+    results-table operations are exactly what a main-database dataset needs.
+    """
 
 
 class SeparateSqliteFileResultsBackend(ResultsBackend):
@@ -221,9 +245,9 @@ class SeparateSqliteFileResultsBackend(ResultsBackend):
             with atomic(ds.conn) as aconn:
                 set_raw_data_db_path_for_run(aconn, ds.run_id, raw_path_str)
 
-    def prepare_background_write_item(self, item: dict[str, Any]) -> None:
-        if self._conn is not None:
-            item["raw_data_path"] = self._conn.path_to_dbfile
+    @property
+    def results_db_path(self) -> str | None:
+        return self._db_path
 
     def read_parameter_data(
         self,

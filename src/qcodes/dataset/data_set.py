@@ -854,9 +854,10 @@ class DataSet(BaseDataSet):
                 "keys": list(expected_keys),
                 "values": values,
                 "table_name": self.table_name,
+                # None means the main database; a separate backend gives the
+                # per-dataset file the background writer should write to.
+                "raw_data_path": self._results_backend.results_db_path,
             }
-            # Let the backend route the write (e.g. to a per-dataset file).
-            self._results_backend.prepare_background_write_item(item)
             writer_status.data_write_queue.put(item)
         else:
             self._results_backend.insert_results(list(expected_keys), values)

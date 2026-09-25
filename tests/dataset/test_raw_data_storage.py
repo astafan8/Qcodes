@@ -203,6 +203,37 @@ class TestDataSetWithSplitRawData:
         assert ds._results_conn is not ds.conn
         self._close_ds(ds)
 
+    def test_background_writing_routes_to_separate_file(self) -> None:
+        """With split storage, background writes must land in the per-dataset
+        file (routed via the backend's results_db_path)."""
+        ds = new_data_set("test-split")
+        x = ParamSpecBase("x", "numeric")
+        y = ParamSpecBase("y", "numeric")
+        idps = InterDependencies_(dependencies={y: (x,)})
+        ds.set_interdependencies(idps)
+        ds.mark_started(start_bg_writer=True)
+
+        # The path the background writer targets is the separate file.
+        assert ds._results_backend.results_db_path is not None
+        assert Path(ds._results_backend.results_db_path) == _raw_file(ds)
+
+        results = [{"x": float(i), "y": float(i**2)} for i in range(5)]
+        ds.add_results(results)
+        ds.mark_completed()  # flushes the background writer
+
+        assert ds.number_of_results == 5
+        data = ds.get_parameter_data()
+        np.testing.assert_array_almost_equal(
+            data["y"]["y"], np.array([r["y"] for r in results])
+        )
+        # Nothing was written to the main DB (no results table there).
+        cursor = ds.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (ds.table_name,),
+        )
+        assert cursor.fetchone() is None
+        self._close_ds(ds)
+
     def test_new_data_set_uses_separate_file_backend(self) -> None:
         """When split is enabled, new datasets use the separate-file backend."""
         ds = new_data_set("test-split")
